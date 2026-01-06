@@ -300,6 +300,11 @@ class ImageViewer(QGraphicsView):
             # Ctrl+클릭: 다중 선택
             if event.modifiers() & Qt.ControlModifier:
                 if isinstance(item, DepositGraphicsItem):
+                    # 기존 selected_item이 있으면 selected_items에 추가
+                    if self.selected_item and self.selected_item not in self.selected_items:
+                        self.selected_items.append(self.selected_item)
+                        self.selected_item = None
+                    
                     if item in self.selected_items:
                         item.set_selected(False)
                         self.selected_items.remove(item)

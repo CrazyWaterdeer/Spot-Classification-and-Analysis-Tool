@@ -1,8 +1,9 @@
 # Build artifacts
 build/
 dist/
-*.egg-info/
 release/
+*.egg-info/
+*.spec
 
 # User data
 data/
