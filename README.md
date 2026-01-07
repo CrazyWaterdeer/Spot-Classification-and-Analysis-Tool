@@ -2,6 +2,8 @@
 
 ML-based analysis tool for *Drosophila* excreta to classify ROD (Reproductive Oblong Deposits) vs Normal deposits.
 
+📖 **[Detailed Workflow Guide](WORKFLOW.md)** - Step-by-step documentation for each stage
+
 ## Installation
 
 ```bash
@@ -38,7 +40,11 @@ uv run python -m scat.cli label
 
 ### Training
 ```bash
+# Random Forest classifier
 uv run python -m scat.cli train --image-dir ./images --output model_rf.pkl --model-type rf
+
+# U-Net segmentation (requires PyTorch)
+# Use GUI: Training tab → Model Type: U-Net Segmentation
 ```
 
 ### Analysis
@@ -67,10 +73,14 @@ results/
 
 ## Features
 
+### Detection
+- **Rule-based**: Two-stage adaptive thresholding (standard + sensitive)
+- **U-Net**: Pixel-level segmentation with learned detection (requires training)
+
 ### Classification
-- **Threshold**: Circularity + Lightness based
-- **Random Forest**: 7-feature ML model
-- **CNN**: Transfer learning with ResNet18
+- **Threshold**: Circularity-based (no training needed)
+- **Random Forest**: 7-feature ML model (fast, accurate)
+- **CNN**: Deep learning with image patches
 
 ### Visualizations
 - PCA plot
