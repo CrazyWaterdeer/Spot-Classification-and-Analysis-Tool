@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.10"
 resolution-markers = [
     "python_full_version >= '3.13' and sys_platform == 'darwin'",
@@ -1524,7 +1524,6 @@ dependencies = [
     { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "scipy", version = "1.16.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "seaborn" },
-    { name = "torch" },
 ]
 
 [package.optional-dependencies]
@@ -1554,7 +1553,6 @@ requires-dist = [
     { name = "scikit-learn", specifier = ">=1.0.0" },
     { name = "scipy", specifier = ">=1.7.0" },
     { name = "seaborn", specifier = ">=0.11.0" },
-    { name = "torch", specifier = ">=2.9.1" },
     { name = "torch", marker = "extra == 'deep'", specifier = ">=1.9.0" },
     { name = "torchvision", marker = "extra == 'deep'", specifier = ">=0.10.0" },
     { name = "weasyprint", marker = "extra == 'pdf'", specifier = ">=52.0" },

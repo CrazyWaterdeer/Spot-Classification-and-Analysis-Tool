@@ -935,6 +935,8 @@ class DetailImageViewer(QGraphicsView):
 class ImageDetailDialog(QDialog):
     """Dialog for viewing and editing deposit classifications."""
     
+    MAX_UNDO = 5  # 최대 undo 횟수
+    
     def __init__(self, filename: str, output_dir: str, film_summary: pd.DataFrame, 
                  deposit_data: pd.DataFrame, parent=None, input_dir: str = None):
         super().__init__(parent)
@@ -944,6 +946,9 @@ class ImageDetailDialog(QDialog):
         self.film_summary = film_summary
         self.deposit_data = deposit_data
         self.modified = False
+        
+        # Undo history
+        self._undo_stack: List[pd.DataFrame] = []
         
         # Get deposits for this file and remove duplicates by id
         self.file_deposits = deposit_data[deposit_data['filename'] == filename].copy()
@@ -1076,7 +1081,55 @@ class ImageDetailDialog(QDialog):
         QShortcut(QKeySequence("3"), self, lambda: self._set_label("artifact"))
         QShortcut(QKeySequence("D"), self, self._delete_selected)
         QShortcut(QKeySequence("Delete"), self, self._delete_selected)
+        QShortcut(QKeySequence("Ctrl+Z"), self, self._undo)  # Undo
         QShortcut(QKeySequence(Qt.Key_Escape), self, self.close)
+    
+    def _save_state(self):
+        """현재 상태를 undo 스택에 저장"""
+        self._undo_stack.append(self.file_deposits.copy())
+        
+        # 최대 개수 유지
+        if len(self._undo_stack) > self.MAX_UNDO:
+            self._undo_stack.pop(0)
+    
+    def _undo(self):
+        """이전 상태로 복원"""
+        if not self._undo_stack:
+            return
+        
+        self.file_deposits = self._undo_stack.pop()
+        
+        # 뷰어 아이템 다시 그리기
+        for item in self.viewer.deposit_items[:]:
+            self.viewer.scene.removeItem(item)
+        self.viewer.deposit_items.clear()
+        self.viewer.selected_item = None
+        
+        # 다시 로드
+        self._add_deposits_to_viewer()
+        self._update_table()
+        self.modified = True
+    
+    def _add_deposits_to_viewer(self):
+        """file_deposits를 뷰어에 추가"""
+        for idx, row in self.file_deposits.iterrows():
+            deposit_id = row.get('id', idx)
+            deposit_data = {
+                'id': deposit_id,
+                'label': row.get('label', 'unknown'),
+                'area': row.get('area', 0),
+                'x': row.get('x', 0),
+                'y': row.get('y', 0),
+                'width': row.get('width', 20),
+                'height': row.get('height', 20),
+                'circularity': row.get('circularity', 0),
+                'contour': self.contour_data.get(deposit_id, [])
+            }
+            item = DepositItemWidget(deposit_data, self.viewer.scale_factor)
+            item.setPos(deposit_data['x'] * self.viewer.scale_factor, 
+                       deposit_data['y'] * self.viewer.scale_factor)
+            self.viewer.scene.addItem(item)
+            self.viewer.deposit_items.append(item)
     
     def _load_data(self):
         image_loaded = False
@@ -1187,6 +1240,8 @@ class ImageDetailDialog(QDialog):
     
     def _on_deposit_added(self, rect: QRectF):
         """Handle new deposit added by drawing rectangle."""
+        self._save_state()  # 추가 전 상태 저장
+        
         # Create new deposit data
         cx = rect.center().x()
         cy = rect.center().y()
@@ -1229,6 +1284,8 @@ class ImageDetailDialog(QDialog):
         if not rows:
             return
         
+        self._save_state()  # 라벨 변경 전 상태 저장
+        
         idx = rows[0].row()
         
         # Update dataframe
@@ -1246,6 +1303,8 @@ class ImageDetailDialog(QDialog):
         rows = self.deposit_table.selectionModel().selectedRows()
         if not rows:
             return
+        
+        self._save_state()  # 삭제 전 상태 저장
         
         idx = rows[0].row()
         

@@ -375,6 +375,8 @@ class ImageViewer(QGraphicsView):
 
 
 class LabelingWindow(QMainWindow):
+    MAX_UNDO = 5  # 최대 undo 횟수
+    
     def __init__(self):
         super().__init__()
         self.setWindowTitle("SCAT - Labeling Tool")
@@ -391,6 +393,9 @@ class LabelingWindow(QMainWindow):
         self.extractor = FeatureExtractor()
         self.next_id = 0
         self.next_group_id = 1  # For grouping deposits
+        
+        # Undo history
+        self._undo_stack: List[List[dict]] = []
         
         # Selection source: 'image' or 'table'
         # Used to determine if auto-advance should happen
@@ -547,6 +552,7 @@ class LabelingWindow(QMainWindow):
         self.deposit_table.setColumnCount(5)
         self.deposit_table.setHorizontalHeaderLabels(["ID", "Area", "Circ", "Hue", "Label"])
         self.deposit_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.deposit_table.setMinimumHeight(280)  # 약 10행 표시
         self.deposit_table.itemSelectionChanged.connect(self._on_table_select)
         right_layout.addWidget(self.deposit_table)
         
@@ -582,6 +588,7 @@ class LabelingWindow(QMainWindow):
         QShortcut(QKeySequence("N"), self, self._select_next)
         QShortcut(QKeySequence("P"), self, self._select_prev)
         QShortcut(QKeySequence("Ctrl+S"), self, self._save_labels)
+        QShortcut(QKeySequence("Ctrl+Z"), self, self._undo)  # Undo
         QShortcut(QKeySequence("D"), self, self._delete_selected)
         QShortcut(QKeySequence("Delete"), self, self._delete_selected)
         QShortcut(QKeySequence("S"), self, lambda: self._set_mode(0))
@@ -591,6 +598,96 @@ class LabelingWindow(QMainWindow):
         # G: group selected, U: ungroup
         QShortcut(QKeySequence("G"), self, self._group_selected)
         QShortcut(QKeySequence("U"), self, self._ungroup_selected)
+    
+    def _save_state(self):
+        """현재 상태를 undo 스택에 저장"""
+        state = []
+        for d in self.deposits:
+            state.append({
+                'id': d.id,
+                'contour': d.contour.copy(),
+                'x': d.x,
+                'y': d.y,
+                'width': d.width,
+                'height': d.height,
+                'area': d.area,
+                'perimeter': d.perimeter,
+                'circularity': d.circularity,
+                'aspect_ratio': d.aspect_ratio,
+                'centroid': d.centroid,
+                'mean_hue': d.mean_hue,
+                'mean_saturation': d.mean_saturation,
+                'mean_lightness': d.mean_lightness,
+                'mean_r': d.mean_r,
+                'mean_g': d.mean_g,
+                'mean_b': d.mean_b,
+                'iod': d.iod,
+                'label': d.label,
+                'confidence': d.confidence,
+                'merged': d.merged,
+                'group_id': d.group_id,
+            })
+        
+        self._undo_stack.append(state)
+        
+        # 최대 개수 유지
+        if len(self._undo_stack) > self.MAX_UNDO:
+            self._undo_stack.pop(0)
+    
+    def _undo(self):
+        """이전 상태로 복원"""
+        if not self._undo_stack:
+            self.statusBar().showMessage("Nothing to undo")
+            return
+        
+        state = self._undo_stack.pop()
+        
+        # 현재 뷰어 아이템 제거
+        for item in self.viewer.deposit_items:
+            self.viewer.scene.removeItem(item)
+        self.viewer.deposit_items.clear()
+        self.viewer.selected_item = None
+        self.viewer.selected_items.clear()
+        self.deposits.clear()
+        
+        # 상태 복원
+        for saved in state:
+            d = Deposit(
+                id=saved['id'],
+                contour=saved['contour'],
+                x=saved['x'],
+                y=saved['y'],
+                width=saved['width'],
+                height=saved['height'],
+                area=saved['area'],
+                perimeter=saved['perimeter'],
+                circularity=saved['circularity'],
+                aspect_ratio=saved['aspect_ratio'],
+                centroid=saved['centroid'],
+                mean_hue=saved['mean_hue'],
+                mean_saturation=saved['mean_saturation'],
+                mean_lightness=saved['mean_lightness'],
+                mean_r=saved['mean_r'],
+                mean_g=saved['mean_g'],
+                mean_b=saved['mean_b'],
+                iod=saved['iod'],
+                label=saved['label'],
+                confidence=saved['confidence'],
+                merged=saved['merged'],
+                group_id=saved['group_id'],
+            )
+            self.deposits.append(d)
+            self.viewer.add_deposit(d)
+        
+        # next_id 업데이트
+        if self.deposits:
+            self.next_id = max(d.id for d in self.deposits) + 1
+        else:
+            self.next_id = 0
+        
+        self._update_table()
+        self._update_stats()
+        self.statusBar().showMessage(f"Undo ({len(self._undo_stack)} remaining)")
     
     def _set_mode(self, mode):
         if mode == 0:
@@ -657,6 +754,8 @@ class LabelingWindow(QMainWindow):
         if self.image is None:
             return
         
+        self._save_state()  # 추가 전 상태 저장
+        
         x, y = int(rect.x()), int(rect.y())
         w, h = int(rect.width()), int(rect.height())
         
@@ -707,6 +806,11 @@ class LabelingWindow(QMainWindow):
     
     def _delete_selected(self):
         deleted = []
+        has_selection = self.viewer.selected_items or self.viewer.selected_item
+        
+        if has_selection:
+            self._save_state()  # 삭제 전 상태 저장
+        
         if self.viewer.selected_items:
             for item in self.viewer.selected_items[:]:
                 self.deposits.remove(item.deposit)
@@ -727,6 +831,8 @@ class LabelingWindow(QMainWindow):
         if len(self.viewer.selected_items) < 2:
             self.statusBar().showMessage("Select 2+ deposits to merge")
             return
+        
+        self._save_state()  # Merge 전 상태 저장
         
         all_points = []
         for item in self.viewer.selected_items:
@@ -776,6 +882,8 @@ class LabelingWindow(QMainWindow):
             self.statusBar().showMessage("Select 2+ deposits to group")
             return
         
+        self._save_state()  # Group 전 상태 저장
+        
         # Assign same group_id to all selected deposits
         group_id = self.next_group_id
         self.next_group_id += 1
@@ -792,12 +900,17 @@ class LabelingWindow(QMainWindow):
     
     def _ungroup_selected(self):
         """Remove selected deposits from their group."""
-        ungrouped_ids = []
-        
         items = self.viewer.selected_items if self.viewer.selected_items else (
             [self.viewer.selected_item] if self.viewer.selected_item else []
         )
         
+        # 그룹된 항목이 있는지 확인
+        has_grouped = any(item and item.deposit.group_id is not None for item in items)
+        
+        if has_grouped:
+            self._save_state()  # Ungroup 전 상태 저장
+        
+        ungrouped_ids = []
         for item in items:
             if item and item.deposit.group_id is not None:
                 item.deposit.group_id = None
@@ -829,6 +942,11 @@ class LabelingWindow(QMainWindow):
         self.label_unknown.setText(str(labels.count("unknown")))
     
     def _set_selected_label(self, label: str):
+        has_selection = self.viewer.selected_items or self.viewer.selected_item
+        
+        if has_selection:
+            self._save_state()  # 라벨 변경 전 상태 저장
+        
         # 다중 선택된 경우 모두 라벨링
         if self.viewer.selected_items:
             for item in self.viewer.selected_items:

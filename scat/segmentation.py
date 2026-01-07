@@ -314,6 +314,46 @@ class SegmentationDataLoader:
 # Training
 # =============================================================================
 
+class DiceLoss:
+    """Dice Loss for segmentation - better for imbalanced classes."""
+    
+    @staticmethod
+    def compute(pred, target, smooth=1.0):
+        """
+        Compute Dice Loss.
+        
+        Args:
+            pred: Predicted logits (before sigmoid)
+            target: Ground truth mask
+            smooth: Smoothing factor to avoid division by zero
+        """
+        torch, nn, F = _load_torch()
+        
+        pred = torch.sigmoid(pred)
+        pred = pred.view(-1)
+        target = target.view(-1)
+        
+        intersection = (pred * target).sum()
+        dice = (2. * intersection + smooth) / (pred.sum() + target.sum() + smooth)
+        
+        return 1 - dice
+
+
+class CombinedLoss:
+    """Combined BCE + Dice Loss for better segmentation."""
+    
+    def __init__(self, bce_weight=0.5, dice_weight=0.5):
+        torch, nn, F = _load_torch()
+        self.bce = nn.BCEWithLogitsLoss()
+        self.bce_weight = bce_weight
+        self.dice_weight = dice_weight
+    
+    def __call__(self, pred, target):
+        bce_loss = self.bce(pred, target)
+        dice_loss = DiceLoss.compute(pred, target)
+        return self.bce_weight * bce_loss + self.dice_weight * dice_loss
+
+
 class SegmentationTrainer:
     """Train U-Net for deposit segmentation."""
     
@@ -338,12 +378,55 @@ class SegmentationTrainer:
         self.model = None
         self.optimizer = None
     
+    def _augment_image_mask(self, img: np.ndarray, msk: np.ndarray) -> List[Tuple[np.ndarray, np.ndarray]]:
+        """
+        Apply various augmentations to image and mask.
+        
+        Returns list of (augmented_image, augmented_mask) tuples.
+        """
+        results = [(img, msk)]  # Original
+        
+        # 1. Horizontal flip
+        results.append((np.fliplr(img).copy(), np.fliplr(msk).copy()))
+        
+        # 2. Vertical flip
+        results.append((np.flipud(img).copy(), np.flipud(msk).copy()))
+        
+        # 3. 90 degree rotations
+        results.append((np.rot90(img, 1).copy(), np.rot90(msk, 1).copy()))
+        results.append((np.rot90(img, 2).copy(), np.rot90(msk, 2).copy()))
+        results.append((np.rot90(img, 3).copy(), np.rot90(msk, 3).copy()))
+        
+        # 4. Brightness variations (image only, mask unchanged)
+        for factor in [0.8, 1.2]:
+            bright_img = np.clip(img * factor, 0, 1).astype(np.float32)
+            results.append((bright_img, msk))
+        
+        # 5. Contrast variations (image only)
+        for factor in [0.8, 1.2]:
+            mean = img.mean()
+            contrast_img = np.clip((img - mean) * factor + mean, 0, 1).astype(np.float32)
+            results.append((contrast_img, msk))
+        
+        # 6. Gaussian noise (image only)
+        noise_std = 0.02
+        noisy_img = np.clip(img + np.random.normal(0, noise_std, img.shape), 0, 1).astype(np.float32)
+        results.append((noisy_img, msk))
+        
+        # 7. Combined: flip + brightness
+        flip_img = np.fliplr(img).copy()
+        flip_msk = np.fliplr(msk).copy()
+        bright_flip = np.clip(flip_img * 0.9, 0, 1).astype(np.float32)
+        results.append((bright_flip, flip_msk))
+        
+        return results
+    
     def prepare_data(
         self, 
         samples: List[SegmentationSample],
         augment: bool = True
     ) -> Tuple:
-        """Prepare training data with augmentation."""
+        """Prepare training data with enhanced augmentation."""
         torch, nn, F = _load_torch()
         
         images = []
@@ -358,21 +441,15 @@ class SegmentationTrainer:
             img = img.astype(np.float32) / 255.0
             msk = (msk > 127).astype(np.float32)
             
-            images.append(img)
-            masks.append(msk)
-            
             if augment:
-                # Horizontal flip
-                images.append(np.fliplr(img).copy())
-                masks.append(np.fliplr(msk).copy())
-                
-                # Vertical flip
-                images.append(np.flipud(img).copy())
-                masks.append(np.flipud(msk).copy())
-                
-                # 90 degree rotation
-                images.append(np.rot90(img).copy())
-                masks.append(np.rot90(msk).copy())
+                # Apply all augmentations
+                augmented = self._augment_image_mask(img, msk)
+                for aug_img, aug_msk in augmented:
+                    images.append(aug_img)
+                    masks.append(aug_msk)
+            else:
+                images.append(img)
+                masks.append(msk)
         
         # Convert to tensors
         images = np.array(images)
@@ -397,25 +474,30 @@ class SegmentationTrainer:
         samples: List[SegmentationSample],
         epochs: int = 50,
         val_split: float = 0.2,
+        patience: int = 10,
         progress_callback=None
     ) -> Dict:
         """
-        Train U-Net model.
+        Train U-Net model with early stopping and LR scheduling.
         
         Args:
             samples: List of training samples
-            epochs: Number of training epochs
+            epochs: Maximum number of training epochs
             val_split: Validation split ratio
-            progress_callback: Function(epoch, loss, val_loss) for progress updates
+            patience: Early stopping patience (epochs without improvement)
+            progress_callback: Function(epoch, loss, val_loss, val_iou) for progress updates
             
         Returns:
             Dict with training history
         """
         torch, nn, F = _load_torch()
         from torch.utils.data import TensorDataset, DataLoader
+        from torch.optim.lr_scheduler import ReduceLROnPlateau
         
         # Prepare data
         X, y = self.prepare_data(samples, augment=True)
+        
+        print(f"Training data: {len(X)} samples (with augmentation)")
         
         # Split into train/val
         n_val = int(len(X) * val_split)
@@ -439,13 +521,24 @@ class SegmentationTrainer:
         self.model = self.model.to(self.device)
         
         # Loss and optimizer
-        criterion = nn.BCEWithLogitsLoss()
+        criterion = CombinedLoss(bce_weight=0.5, dice_weight=0.5)
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.learning_rate)
         
-        # Training loop
-        history = {'train_loss': [], 'val_loss': [], 'val_iou': []}
+        # Learning rate scheduler
+        scheduler = ReduceLROnPlateau(
+            self.optimizer, 
+            mode='min', 
+            factor=0.5,      # LR *= 0.5 when plateau
+            patience=5,      # Wait 5 epochs before reducing
+            min_lr=1e-6,
+            verbose=True
+        )
+        
+        # Training loop with early stopping
+        history = {'train_loss': [], 'val_loss': [], 'val_iou': [], 'lr': []}
         best_val_loss = float('inf')
         best_model_state = None
+        epochs_without_improvement = 0
         
         for epoch in range(epochs):
             # Training
@@ -487,23 +580,39 @@ class SegmentationTrainer:
             val_loss /= len(val_loader)
             val_iou /= len(val_loader)
             
+            # Get current learning rate
+            current_lr = self.optimizer.param_groups[0]['lr']
+            
             history['train_loss'].append(train_loss)
             history['val_loss'].append(val_loss)
             history['val_iou'].append(val_iou)
+            history['lr'].append(current_lr)
             
-            # Save best model
+            # Update learning rate scheduler
+            scheduler.step(val_loss)
+            
+            # Check for improvement
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
-                best_model_state = self.model.state_dict().copy()
+                best_model_state = {k: v.cpu().clone() for k, v in self.model.state_dict().items()}
+                epochs_without_improvement = 0
+            else:
+                epochs_without_improvement += 1
             
             if progress_callback:
                 progress_callback(epoch + 1, train_loss, val_loss, val_iou)
+            
+            # Early stopping
+            if epochs_without_improvement >= patience:
+                print(f"\nEarly stopping at epoch {epoch + 1} (no improvement for {patience} epochs)")
+                break
         
         # Load best model
         if best_model_state:
             self.model.load_state_dict(best_model_state)
         
         history['best_val_loss'] = best_val_loss
+        history['stopped_epoch'] = epoch + 1
         return history
     
     def _calculate_iou(self, pred: 'torch.Tensor', target: 'torch.Tensor') -> float:
@@ -647,6 +756,7 @@ def train_segmentation_model(
     label_dir: Optional[str] = None,
     output_path: str = "model_unet.pt",
     epochs: int = 50,
+    patience: int = 10,
     image_size: int = 256,
     batch_size: int = 4,
     progress_callback=None
@@ -658,7 +768,8 @@ def train_segmentation_model(
         image_dir: Directory containing images
         label_dir: Directory containing label JSON files (default: same as image_dir)
         output_path: Path to save trained model
-        epochs: Number of training epochs
+        epochs: Maximum number of training epochs
+        patience: Early stopping patience (epochs without improvement)
         image_size: Image size for training
         batch_size: Batch size
         progress_callback: Progress callback function
@@ -687,6 +798,7 @@ def train_segmentation_model(
     history = trainer.train(
         samples,
         epochs=epochs,
+        patience=patience,
         progress_callback=progress_callback
     )
     
