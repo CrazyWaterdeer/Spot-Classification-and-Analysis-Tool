@@ -206,14 +206,14 @@ class DepositGraphicsItem(QGraphicsPathItem):
         # If grouped, use dashed line with group color
         if self.deposit.group_id is not None:
             group_color = self.GROUP_COLORS[self.deposit.group_id % len(self.GROUP_COLORS)]
-            pen = QPen(group_color, 4 if self.selected else 3)
+            pen = QPen(group_color, 0.6 if self.selected else 0.3)
             pen.setStyle(Qt.DashLine)
             self.setPen(pen)
         else:
-            self.setPen(QPen(color.darker(150), 3 if self.selected else 2))
+            self.setPen(QPen(color.darker(150), 0.6 if self.selected else 0.3))
         
         fill = QColor(color)
-        fill.setAlpha(100 if self.selected else 50)
+        fill.setAlpha(30 if self.selected else 10)
         self.setBrush(QBrush(fill))
     
     def set_label(self, label: str):
@@ -276,7 +276,6 @@ class ImageViewer(QGraphicsView):
     
     def add_deposit(self, deposit: Deposit):
         item = DepositGraphicsItem(deposit, self.scale_factor)
-        item.setFlag(QGraphicsPathItem.ItemIsSelectable)
         self.scene.addItem(item)
         self.deposit_items.append(item)
     
@@ -341,7 +340,7 @@ class ImageViewer(QGraphicsView):
             self.drawing = True
             self.start_point = self.mapToScene(event.pos())
             self.rect_item = QGraphicsRectItem()
-            self.rect_item.setPen(QPen(QColor(0, 0, 255), 2, Qt.DashLine))
+            self.rect_item.setPen(QPen(QColor(0, 0, 255), 1, Qt.DashLine))
             self.scene.addItem(self.rect_item)
         elif self.edit_mode == self.MODE_MERGE:
             item = self.itemAt(event.pos())
