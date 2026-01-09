@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QSpinBox, QDoubleSpinBox, QFormLayout, QTableWidget,
     QTableWidgetItem, QHeaderView, QButtonGroup, QRadioButton, QScrollArea
 )
-from PySide6.QtCore import Qt, QRectF
+from PySide6.QtCore import Qt, QRectF, QTimer
 from PySide6.QtGui import (
     QImage, QPixmap, QPainter, QPen, QColor, QBrush, 
     QPainterPath, QAction, QShortcut, QKeySequence, QWheelEvent
@@ -203,17 +203,22 @@ class DepositGraphicsItem(QGraphicsPathItem):
     def _update_appearance(self):
         color = self.COLORS.get(self.deposit.label, self.COLORS['unknown'])
         
+        # Line width: 0.6 when selected, 0.3 when not
+        # Alpha: 30 when selected, 10 when not
+        line_width = 0.6 if self.selected else 0.3
+        alpha = 30 if self.selected else 10
+        
         # If grouped, use dashed line with group color
         if self.deposit.group_id is not None:
             group_color = self.GROUP_COLORS[self.deposit.group_id % len(self.GROUP_COLORS)]
-            pen = QPen(group_color, 0.6 if self.selected else 0.3)
+            pen = QPen(group_color, line_width)
             pen.setStyle(Qt.DashLine)
             self.setPen(pen)
         else:
-            self.setPen(QPen(color.darker(150), 0.6 if self.selected else 0.3))
+            self.setPen(QPen(color.darker(150), line_width))
         
         fill = QColor(color)
-        fill.setAlpha(30 if self.selected else 10)
+        fill.setAlpha(alpha)
         self.setBrush(QBrush(fill))
     
     def set_label(self, label: str):
@@ -276,6 +281,7 @@ class ImageViewer(QGraphicsView):
     
     def add_deposit(self, deposit: Deposit):
         item = DepositGraphicsItem(deposit, self.scale_factor)
+        item.setFlag(QGraphicsPathItem.ItemIsSelectable)
         self.scene.addItem(item)
         self.deposit_items.append(item)
     
@@ -340,7 +346,7 @@ class ImageViewer(QGraphicsView):
             self.drawing = True
             self.start_point = self.mapToScene(event.pos())
             self.rect_item = QGraphicsRectItem()
-            self.rect_item.setPen(QPen(QColor(0, 0, 255), 1, Qt.DashLine))
+            self.rect_item.setPen(QPen(QColor(0, 0, 255), 2, Qt.DashLine))
             self.scene.addItem(self.rect_item)
         elif self.edit_mode == self.MODE_MERGE:
             item = self.itemAt(event.pos())
@@ -374,7 +380,8 @@ class ImageViewer(QGraphicsView):
 
 
 class LabelingWindow(QMainWindow):
-    MAX_UNDO = 5  # 최대 undo 횟수
+    MAX_UNDO = 5  # Maximum undo steps
+    AUTO_SAVE_INTERVAL = 60000  # 1 minute in milliseconds
     
     def __init__(self):
         super().__init__()
@@ -387,6 +394,9 @@ class LabelingWindow(QMainWindow):
         self.image: Optional[np.ndarray] = None
         self.deposits: List[Deposit] = []
         self.current_file: Optional[Path] = None
+        self._last_saved_path: Optional[Path] = None  # For auto-save
+        self._has_unsaved_changes = False
+        
         # Use sensitive_mode=True to match Analysis tab detection
         self.detector = DepositDetector(sensitive_mode=True)
         self.extractor = FeatureExtractor()
@@ -399,6 +409,11 @@ class LabelingWindow(QMainWindow):
         # Selection source: 'image' or 'table'
         # Used to determine if auto-advance should happen
         self._selection_source = 'image'
+        
+        # Auto-save timer
+        self._auto_save_timer = QTimer(self)
+        self._auto_save_timer.timeout.connect(self._auto_save)
+        self._auto_save_timer.start(self.AUTO_SAVE_INTERVAL)
         
         self._setup_ui()
         self._setup_shortcuts()
@@ -551,7 +566,13 @@ class LabelingWindow(QMainWindow):
         self.deposit_table.setColumnCount(5)
         self.deposit_table.setHorizontalHeaderLabels(["ID", "Area", "Circ", "Hue", "Label"])
         self.deposit_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.deposit_table.setMinimumHeight(280)  # 약 10행 표시
+        self.deposit_table.setMinimumHeight(280)  # ~10 rows visible
+        
+        # Table cleanup: disable editing, hide row numbers, enable sorting
+        self.deposit_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.deposit_table.verticalHeader().setVisible(False)
+        self.deposit_table.setSortingEnabled(True)
+        
         self.deposit_table.itemSelectionChanged.connect(self._on_table_select)
         right_layout.addWidget(self.deposit_table)
         
@@ -599,7 +620,7 @@ class LabelingWindow(QMainWindow):
         QShortcut(QKeySequence("U"), self, self._ungroup_selected)
     
     def _save_state(self):
-        """현재 상태를 undo 스택에 저장"""
+        """Save current state to undo stack."""
         state = []
         for d in self.deposits:
             state.append({
@@ -629,9 +650,12 @@ class LabelingWindow(QMainWindow):
         
         self._undo_stack.append(state)
         
-        # 최대 개수 유지
+        # Maintain maximum size
         if len(self._undo_stack) > self.MAX_UNDO:
             self._undo_stack.pop(0)
+        
+        # Mark as having unsaved changes
+        self._mark_unsaved()
     
     def _undo(self):
         """이전 상태로 복원"""
@@ -1038,30 +1062,74 @@ class LabelingWindow(QMainWindow):
             self, "Save Labels", str(default_path), "JSON (*.json)"
         )
         if path:
-            # Save directory for next time
+            self._save_to_path(Path(path))
+            self._last_saved_path = Path(path)
+            self._has_unsaved_changes = False
             config.set("last_label_dir", str(Path(path).parent))
-            
-            data = {
-                'image_file': str(self.current_file),
-                'next_group_id': self.next_group_id,
-                'deposits': []
-            }
-            for d in self.deposits:
-                deposit_data = {
-                    'id': d.id, 
-                    'x': d.centroid[0], 
-                    'y': d.centroid[1],
-                    'area': d.area, 
-                    'circularity': d.circularity, 
-                    'label': d.label,
-                    'contour': d.contour.tolist(),
-                    'merged': d.merged,
-                    'group_id': d.group_id
-                }
-                data['deposits'].append(deposit_data)
-            with open(path, 'w') as f:
-                json.dump(data, f, indent=2)
             self.statusBar().showMessage(f"Saved to {path}")
+    
+    def _save_to_path(self, path: Path):
+        """Save labels to the specified path."""
+        data = {
+            'image_file': str(self.current_file),
+            'next_group_id': self.next_group_id,
+            'deposits': []
+        }
+        for d in self.deposits:
+            deposit_data = {
+                'id': d.id,
+                'contour': d.contour.tolist(),
+                'x': d.centroid[0], 
+                'y': d.centroid[1],
+                'width': d.width,
+                'height': d.height,
+                'area': d.area, 
+                'circularity': d.circularity, 
+                'label': d.label,
+                'confidence': d.confidence,
+                'merged': d.merged,
+                'group_id': d.group_id
+            }
+            data['deposits'].append(deposit_data)
+        with open(path, 'w') as f:
+            json.dump(data, f, indent=2)
+    
+    def _auto_save(self):
+        """Auto-save if there are unsaved changes and a save path exists."""
+        if self._has_unsaved_changes and self._last_saved_path:
+            try:
+                self._save_to_path(self._last_saved_path)
+                self._has_unsaved_changes = False
+                self.statusBar().showMessage("Auto-saved", 3000)
+            except Exception as e:
+                self.statusBar().showMessage(f"Auto-save failed: {e}", 5000)
+    
+    def _mark_unsaved(self):
+        """Mark that there are unsaved changes."""
+        self._has_unsaved_changes = True
+    
+    def closeEvent(self, event):
+        """Handle window close with unsaved changes warning."""
+        if self._has_unsaved_changes:
+            from PySide6.QtWidgets import QMessageBox
+            reply = QMessageBox.question(
+                self, "Unsaved Changes",
+                "You have unsaved changes. Save before closing?",
+                QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel
+            )
+            
+            if reply == QMessageBox.Save:
+                if self._last_saved_path:
+                    self._save_to_path(self._last_saved_path)
+                else:
+                    self._save_labels()
+                event.accept()
+            elif reply == QMessageBox.Discard:
+                event.accept()
+            else:
+                event.ignore()
+        else:
+            event.accept()
     
     def _load_labels(self):
         # Use last label directory

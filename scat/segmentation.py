@@ -158,8 +158,9 @@ class SegmentationDataLoader:
         with open(label_file) as f:
             data = json.load(f)
         
-        # Find corresponding image
-        image_name = Path(data['image_file']).name
+        # Find corresponding image (support both 'image_file' and 'filename' keys)
+        image_ref = data.get('image_file', data.get('filename', ''))
+        image_name = Path(image_ref).name
         image_path = self._find_image(image_name)
         
         if image_path is None:

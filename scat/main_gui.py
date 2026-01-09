@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Optional, Dict, List
 import numpy as np
 import pandas as pd
+import cv2
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -809,9 +810,15 @@ class DepositItemWidget(QGraphicsPathItem):
     def _update_appearance(self):
         label = self.deposit_data.get('label', 'unknown')
         color = self.COLORS.get(label, self.COLORS['unknown'])
-        self.setPen(QPen(color.darker(150), 3 if self.selected else 2))
+        
+        # Line width: 0.6 when selected, 0.3 when not
+        # Alpha: 30 when selected, 10 when not
+        line_width = 0.6 if self.selected else 0.3
+        alpha = 30 if self.selected else 10
+        
+        self.setPen(QPen(color.darker(150), line_width))
         fill = QColor(color)
-        fill.setAlpha(100 if self.selected else 50)
+        fill.setAlpha(alpha)
         self.setBrush(QBrush(fill))
     
     def set_label(self, label: str):
@@ -821,6 +828,23 @@ class DepositItemWidget(QGraphicsPathItem):
     def set_selected(self, selected: bool):
         self.selected = selected
         self._update_appearance()
+    
+    def update_group_visual(self, group_id):
+        """Update visual to show group membership."""
+        self.deposit_data['group_id'] = group_id
+        label = self.deposit_data.get('label', 'unknown')
+        color = self.COLORS.get(label, self.COLORS['unknown'])
+        
+        # Line width: 0.6 when selected, 0.3 when not
+        line_width = 0.6 if self.selected else 0.3
+        
+        if group_id is not None:
+            # Dashed border for grouped items
+            pen = QPen(color.darker(150), line_width, Qt.DashLine)
+        else:
+            pen = QPen(color.darker(150), line_width)
+        
+        self.setPen(pen)
 
 
 class DetailImageViewer(QGraphicsView):
@@ -844,6 +868,8 @@ class DetailImageViewer(QGraphicsView):
         self.pixmap_item = None
         self.deposit_items: List[DepositItemWidget] = []
         self.selected_item: Optional[DepositItemWidget] = None
+        self.selected_items: List[DepositItemWidget] = []  # Multi-select support
+        self.scale_factor = 1.0
         
         self.edit_mode = self.MODE_SELECT
         self.drawing = False
@@ -861,6 +887,7 @@ class DetailImageViewer(QGraphicsView):
         self.scene.clear()
         self.deposit_items.clear()
         self.selected_item = None
+        self.selected_items.clear()
         
         pixmap = QPixmap(image_path)
         if not pixmap.isNull():
@@ -881,6 +908,17 @@ class DetailImageViewer(QGraphicsView):
             self.scene.removeItem(item)
             if self.selected_item == item:
                 self.selected_item = None
+            if item in self.selected_items:
+                self.selected_items.remove(item)
+    
+    def clear_selection(self):
+        """Clear all selections."""
+        if self.selected_item:
+            self.selected_item.set_selected(False)
+            self.selected_item = None
+        for item in self.selected_items:
+            item.set_selected(False)
+        self.selected_items.clear()
     
     def wheelEvent(self, event):
         factor = 1.15 if event.angleDelta().y() > 0 else 1 / 1.15
@@ -888,19 +926,33 @@ class DetailImageViewer(QGraphicsView):
     
     def mousePressEvent(self, event):
         if self.edit_mode == self.MODE_SELECT:
-            # Check if clicking on a deposit
             item = self.itemAt(event.pos())
-            if isinstance(item, DepositItemWidget):
-                if self.selected_item:
-                    self.selected_item.set_selected(False)
-                self.selected_item = item
-                item.set_selected(True)
-                index = item.data(0)
-                self.deposit_selected.emit(index)
+            
+            # Ctrl+click for multi-select
+            if event.modifiers() & Qt.ControlModifier:
+                if isinstance(item, DepositItemWidget):
+                    # Move existing selected_item to selected_items first
+                    if self.selected_item and self.selected_item not in self.selected_items:
+                        self.selected_items.append(self.selected_item)
+                        self.selected_item = None
+                    
+                    # Toggle selection
+                    if item in self.selected_items:
+                        item.set_selected(False)
+                        self.selected_items.remove(item)
+                    else:
+                        item.set_selected(True)
+                        self.selected_items.append(item)
             else:
-                if self.selected_item:
-                    self.selected_item.set_selected(False)
-                    self.selected_item = None
+                # Normal click - single selection
+                self.clear_selection()
+                
+                if isinstance(item, DepositItemWidget):
+                    self.selected_item = item
+                    item.set_selected(True)
+                    index = item.data(0)
+                    self.deposit_selected.emit(index)
+            
             super().mousePressEvent(event)
         
         elif self.edit_mode == self.MODE_ADD:
@@ -1023,6 +1075,25 @@ class ImageDetailDialog(QDialog):
         label_group.setLayout(label_layout)
         right_layout.addWidget(label_group)
         
+        # Edit buttons (Merge, Group, Ungroup)
+        edit_group = QGroupBox("Edit (Ctrl+Click to multi-select)")
+        edit_layout = QHBoxLayout()
+        
+        btn_merge = QPushButton("Merge (M)")
+        btn_merge.clicked.connect(self._merge_selected)
+        edit_layout.addWidget(btn_merge)
+        
+        btn_group = QPushButton("Group (G)")
+        btn_group.clicked.connect(self._group_selected)
+        edit_layout.addWidget(btn_group)
+        
+        btn_ungroup = QPushButton("Ungroup (U)")
+        btn_ungroup.clicked.connect(self._ungroup_selected)
+        edit_layout.addWidget(btn_ungroup)
+        
+        edit_group.setLayout(edit_layout)
+        right_layout.addWidget(edit_group)
+        
         # Deposit table
         table_group = QGroupBox("Deposits")
         table_layout = QVBoxLayout()
@@ -1081,6 +1152,9 @@ class ImageDetailDialog(QDialog):
         QShortcut(QKeySequence("3"), self, lambda: self._set_label("artifact"))
         QShortcut(QKeySequence("D"), self, self._delete_selected)
         QShortcut(QKeySequence("Delete"), self, self._delete_selected)
+        QShortcut(QKeySequence("M"), self, self._merge_selected)
+        QShortcut(QKeySequence("G"), self, self._group_selected)
+        QShortcut(QKeySequence("U"), self, self._ungroup_selected)
         QShortcut(QKeySequence("Ctrl+Z"), self, self._undo)  # Undo
         QShortcut(QKeySequence(Qt.Key_Escape), self, self.close)
     
@@ -1114,16 +1188,19 @@ class ImageDetailDialog(QDialog):
         """file_deposits를 뷰어에 추가"""
         for idx, row in self.file_deposits.iterrows():
             deposit_id = row.get('id', idx)
+            info = self.contour_data.get(deposit_id, {})
             deposit_data = {
                 'id': deposit_id,
                 'label': row.get('label', 'unknown'),
-                'area': row.get('area', 0),
+                'area': row.get('area', row.get('area_px', 0)),
                 'x': row.get('x', 0),
                 'y': row.get('y', 0),
                 'width': row.get('width', 20),
                 'height': row.get('height', 20),
                 'circularity': row.get('circularity', 0),
-                'contour': self.contour_data.get(deposit_id, [])
+                'contour': info.get('contour', []) if isinstance(info, dict) else info,
+                'merged': info.get('merged', False) if isinstance(info, dict) else False,
+                'group_id': info.get('group_id', None) if isinstance(info, dict) else None
             }
             item = DepositItemWidget(deposit_data, self.viewer.scale_factor)
             item.setPos(deposit_data['x'] * self.viewer.scale_factor, 
@@ -1136,16 +1213,30 @@ class ImageDetailDialog(QDialog):
         using_annotated = False
         stem = Path(self.filename).stem
         
-        # Try to load contour data from JSON
+        # Try to load contour data from JSON (unified format first, then legacy)
         self.contour_data = {}
-        json_path = self.output_dir / 'deposits' / f"{stem}_deposits.json"
+        self.json_data = {}  # Store full JSON data for save
+        self.next_group_id = 1
+        
+        # Check for new format first, then legacy
+        json_path = self.output_dir / 'deposits' / f"{stem}.labels.json"
+        if not json_path.exists():
+            json_path = self.output_dir / 'deposits' / f"{stem}_deposits.json"
+        
         if json_path.exists():
             import json
             try:
                 with open(json_path, 'r') as f:
                     data = json.load(f)
+                    self.json_data = data
+                    self.next_group_id = data.get('next_group_id', 1)
                     for dep in data.get('deposits', []):
-                        self.contour_data[dep['id']] = dep.get('contour', [])
+                        dep_id = dep.get('id', len(self.contour_data))
+                        self.contour_data[dep_id] = {
+                            'contour': dep.get('contour', []),
+                            'merged': dep.get('merged', False),
+                            'group_id': dep.get('group_id', None)
+                        }
             except Exception:
                 pass
         
@@ -1188,10 +1279,13 @@ class ImageDetailDialog(QDialog):
             for idx in range(len(self.file_deposits)):
                 row = self.file_deposits.iloc[idx]
                 deposit_data = row.to_dict()
-                # Add contour if available
+                # Add contour and group info if available
                 deposit_id = deposit_data.get('id', idx)
                 if deposit_id in self.contour_data:
-                    deposit_data['contour'] = self.contour_data[deposit_id]
+                    info = self.contour_data[deposit_id]
+                    deposit_data['contour'] = info.get('contour', [])
+                    deposit_data['merged'] = info.get('merged', False)
+                    deposit_data['group_id'] = info.get('group_id', None)
                 self.viewer.add_deposit(deposit_data, idx)
         
         self._update_table()
@@ -1325,12 +1419,159 @@ class ImageDetailDialog(QDialog):
         self._update_stats()
         self.modified = True
     
+    def _merge_selected(self):
+        """Merge multiple selected deposits into one."""
+        if len(self.viewer.selected_items) < 2:
+            return
+        
+        self._save_state()
+        
+        import cv2
+        
+        # Collect all contour points
+        all_points = []
+        indices_to_remove = []
+        
+        for item in self.viewer.selected_items:
+            idx = item.data(0)
+            if idx is not None and idx < len(self.file_deposits):
+                indices_to_remove.append(idx)
+                dep_id = self.file_deposits.iloc[idx].get('id', idx)
+                info = self.contour_data.get(dep_id, {})
+                contour = info.get('contour', []) if isinstance(info, dict) else info
+                if contour:
+                    all_points.extend(contour)
+        
+        if len(all_points) < 3:
+            return
+        
+        # Create convex hull
+        hull = cv2.convexHull(np.array(all_points))
+        
+        # Calculate properties
+        area = cv2.contourArea(hull)
+        perimeter = cv2.arcLength(hull, True)
+        circularity = 4 * np.pi * area / (perimeter ** 2) if perimeter > 0 else 0
+        bx, by, bw, bh = cv2.boundingRect(hull)
+        
+        M = cv2.moments(hull)
+        cx = int(M["m10"] / M["m00"]) if M["m00"] > 0 else bx + bw // 2
+        cy = int(M["m01"] / M["m00"]) if M["m00"] > 0 else by + bh // 2
+        
+        # Create new deposit
+        new_id = int(self.file_deposits['id'].max() + 1) if len(self.file_deposits) > 0 else 0
+        
+        new_row = {
+            'id': new_id,
+            'filename': self.filename,
+            'x': cx,
+            'y': cy,
+            'width': bw,
+            'height': bh,
+            'area': area,
+            'circularity': circularity,
+            'label': 'normal',
+            'confidence': 1.0
+        }
+        
+        # Remove old deposits (in reverse order to maintain indices)
+        for idx in sorted(indices_to_remove, reverse=True):
+            dep_id = self.file_deposits.iloc[idx].get('id', idx)
+            if dep_id in self.contour_data:
+                del self.contour_data[dep_id]
+            self.file_deposits = self.file_deposits.drop(self.file_deposits.index[idx])
+        
+        self.file_deposits = self.file_deposits.reset_index(drop=True)
+        
+        # Add new merged deposit
+        self.file_deposits = pd.concat([
+            self.file_deposits,
+            pd.DataFrame([new_row])
+        ], ignore_index=True)
+        
+        # Add contour data
+        self.contour_data[new_id] = {
+            'contour': hull.squeeze().tolist(),
+            'merged': True,
+            'group_id': None
+        }
+        
+        # Refresh viewer
+        self.viewer.clear_selection()
+        for item in self.viewer.deposit_items[:]:
+            self.viewer.scene.removeItem(item)
+        self.viewer.deposit_items.clear()
+        self._add_deposits_to_viewer()
+        
+        self._update_table()
+        self._update_stats()
+        self.modified = True
+    
+    def _group_selected(self):
+        """Group selected deposits together."""
+        if len(self.viewer.selected_items) < 2:
+            return
+        
+        self._save_state()
+        
+        group_id = self.next_group_id
+        self.next_group_id += 1
+        
+        for item in self.viewer.selected_items:
+            idx = item.data(0)
+            if idx is not None and idx < len(self.file_deposits):
+                dep_id = self.file_deposits.iloc[idx].get('id', idx)
+                if dep_id in self.contour_data:
+                    self.contour_data[dep_id]['group_id'] = group_id
+                else:
+                    self.contour_data[dep_id] = {'contour': [], 'merged': False, 'group_id': group_id}
+                # Update visual
+                item.update_group_visual(group_id)
+        
+        self.viewer.clear_selection()
+        self.modified = True
+    
+    def _ungroup_selected(self):
+        """Remove selected deposits from their group."""
+        items = self.viewer.selected_items if self.viewer.selected_items else (
+            [self.viewer.selected_item] if self.viewer.selected_item else []
+        )
+        
+        if not items:
+            return
+        
+        has_grouped = False
+        for item in items:
+            idx = item.data(0)
+            if idx is not None and idx < len(self.file_deposits):
+                dep_id = self.file_deposits.iloc[idx].get('id', idx)
+                info = self.contour_data.get(dep_id, {})
+                if isinstance(info, dict) and info.get('group_id') is not None:
+                    has_grouped = True
+                    break
+        
+        if has_grouped:
+            self._save_state()
+        
+        for item in items:
+            idx = item.data(0)
+            if idx is not None and idx < len(self.file_deposits):
+                dep_id = self.file_deposits.iloc[idx].get('id', idx)
+                if dep_id in self.contour_data and isinstance(self.contour_data[dep_id], dict):
+                    self.contour_data[dep_id]['group_id'] = None
+                item.update_group_visual(None)
+        
+        self.viewer.clear_selection()
+        self.modified = True
+    
     def _save_changes(self):
         if not self.modified:
             self.accept()
             return
         
         try:
+            import json
+            
             # Update all_deposits.csv
             all_deposits_path = self.output_dir / 'all_deposits.csv'
             if all_deposits_path.exists():
@@ -1341,12 +1582,46 @@ class ImageDetailDialog(QDialog):
                 all_df = pd.concat([all_df, self.file_deposits], ignore_index=True)
                 all_df.to_csv(all_deposits_path, index=False)
             
-            # Update individual deposit file
+            # Update individual deposit file (CSV)
             deposits_dir = self.output_dir / 'deposits'
             if deposits_dir.exists():
                 stem = Path(self.filename).stem
                 deposit_file = deposits_dir / f"{stem}_deposits.csv"
                 self.file_deposits.to_csv(deposit_file, index=False)
+                
+                # Also update JSON in unified format
+                deposits_data = []
+                for idx, row in self.file_deposits.iterrows():
+                    dep_id = row.get('id', idx)
+                    info = self.contour_data.get(dep_id, {})
+                    deposit_dict = {
+                        'id': int(dep_id),
+                        'contour': info.get('contour', []),
+                        'x': int(row.get('x', 0)),
+                        'y': int(row.get('y', 0)),
+                        'width': int(row.get('width', 20)),
+                        'height': int(row.get('height', 20)),
+                        'area': float(row.get('area', row.get('area_px', 0))),
+                        'circularity': float(row.get('circularity', 0)),
+                        'label': row.get('label', 'unknown'),
+                        'confidence': float(row.get('confidence', 1.0)),
+                        'merged': info.get('merged', False),
+                        'group_id': info.get('group_id', None)
+                    }
+                    deposits_data.append(deposit_dict)
+                
+                json_path = deposits_dir / f"{stem}.labels.json"
+                with open(json_path, 'w') as f:
+                    json.dump({
+                        'image_file': self.filename,
+                        'next_group_id': self.next_group_id,
+                        'deposits': deposits_data
+                    }, f, indent=2)
+                
+                # Remove legacy format if exists
+                legacy_json = deposits_dir / f"{stem}_deposits.json"
+                if legacy_json.exists():
+                    legacy_json.unlink()
             
             # Update film_summary.csv
             summary_path = self.output_dir / 'film_summary.csv'

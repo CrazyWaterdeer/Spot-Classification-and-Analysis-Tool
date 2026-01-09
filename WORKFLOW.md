@@ -6,7 +6,7 @@ This document provides detailed explanations of each stage in SCAT.
 
 ```
 ┌─────────────┐    ┌──────────────┐    ┌─────────────┐    ┌────────────────┐    ┌──────────────┐
-│  Labeling   │ →  │   Training   │ →  │  Detection  │ →  │ Classification │ →  │   Analysis   │
+│  Labeling   │ → │   Training   │ → │  Detection  │ → │ Classification │ → │   Analysis   │
 │  (Manual)   │    │  (Learning)  │    │  (Finding)  │    │   (Sorting)    │    │  (Results)   │
 └─────────────┘    └──────────────┘    └─────────────┘    └────────────────┘    └──────────────┘
 ```
@@ -163,20 +163,20 @@ Image
   ↓
 Convert to Grayscale
   ↓
-┌──────────────────────────────────────┐
-│ Stage 1: Standard Detection          │
+┌─────────────────────────────────────┐
+│ Stage 1: Standard Detection         │
 │ - Adaptive Threshold (block=51, c=10)│
-│ - Morphological cleanup (3×3)        │
-│ → Normal deposits (precise boundary) │
-└──────────────────────────────────────┘
+│ - Morphological cleanup (3×3)       │
+│ → Normal deposits (precise boundary)│
+└─────────────────────────────────────┘
   ↓
-┌──────────────────────────────────────┐
-│ Stage 2: Sensitive Detection         │
-│ - Exclusion mask (Stage 1 + 15px)    │
-│ - Lower threshold (c=5)              │
-│ - HSV-based detection                │
-│ → Additional dilute deposits only    │
-└──────────────────────────────────────┘
+┌─────────────────────────────────────┐
+│ Stage 2: Sensitive Detection        │
+│ - Exclusion mask (Stage 1 + 15px)   │
+│ - Lower threshold (c=5)             │
+│ - HSV-based detection               │
+│ → Additional dilute deposits only   │
+└─────────────────────────────────────┘
   ↓
 Extract contours (min_area=20, max_area=10000)
   ↓
@@ -335,21 +335,21 @@ Groups CSV (group column)
   ↓
 Separate data by group
   ↓
-┌──────────────────────────────┐
+┌─────────────────────────────┐
 │ Normality test (Shapiro-Wilk)│
-└──────────────────────────────┘
+└─────────────────────────────┘
   ↓
-┌──────────────────────────────┐
-│ 2 groups: t-test             │
-│           (or Mann-Whitney)  │
-│ 3+ groups: ANOVA             │
+┌─────────────────────────────┐
+│ 2 groups: t-test            │
+│           (or Mann-Whitney) │
+│ 3+ groups: ANOVA            │
 │           (or Kruskal-Wallis)│
-└──────────────────────────────┘
+└─────────────────────────────┘
   ↓
-┌──────────────────────────────┐
-│ Pairwise comparisons         │
-│ + Bonferroni correction      │
-└──────────────────────────────┘
+┌─────────────────────────────┐
+│ Pairwise comparisons        │
+│ + Bonferroni correction     │
+└─────────────────────────────┘
   ↓
 p-value, Effect size (Cohen's d), Significance determination
 ```

@@ -236,30 +236,33 @@ class ReportGenerator:
             self._save_contour_json(result, image_stem)
     
     def _save_contour_json(self, result: AnalysisResult, image_stem: str):
-        """Save deposit contours as JSON for later editing."""
+        """Save deposit contours as JSON (unified format with labeling)."""
         import json
         
         deposits_data = []
         for d in result.deposits:
             deposit_dict = {
                 'id': d.id,
+                'contour': d.contour.squeeze().tolist() if d.contour is not None else [],
                 'x': d.centroid[0],
                 'y': d.centroid[1],
                 'width': d.width,
                 'height': d.height,
-                'area_px': float(d.area),
+                'area': float(d.area),
                 'circularity': float(d.circularity),
-                'aspect_ratio': float(d.aspect_ratio),
                 'label': d.label,
                 'confidence': float(d.confidence),
-                'contour': d.contour.squeeze().tolist() if d.contour is not None else []
+                'merged': getattr(d, 'merged', False),
+                'group_id': getattr(d, 'group_id', None)
             }
             deposits_data.append(deposit_dict)
         
-        json_path = self.deposits_dir / f'{image_stem}_deposits.json'
+        # Use unified format: *.labels.json
+        json_path = self.deposits_dir / f'{image_stem}.labels.json'
         with open(json_path, 'w') as f:
             json.dump({
-                'filename': result.filename,
+                'image_file': result.filename,
+                'next_group_id': 1,
                 'deposits': deposits_data
             }, f, indent=2)
     

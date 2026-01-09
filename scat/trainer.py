@@ -87,8 +87,9 @@ class DataLoader:
             with open(label_file) as f:
                 data = json.load(f)
             
-            # Find corresponding image
-            image_name = Path(data['image_file']).name
+            # Find corresponding image (support both 'image_file' and 'filename' keys)
+            image_ref = data.get('image_file', data.get('filename', ''))
+            image_name = Path(image_ref).name
             image_path = self.image_dir / image_name
             
             # Try common extensions if not found
