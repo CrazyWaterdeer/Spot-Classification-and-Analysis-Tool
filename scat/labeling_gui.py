@@ -123,8 +123,18 @@ class Theme:
                 spacing: 8px;
             }}
             QRadioButton::indicator {{
-                width: 16px;
-                height: 16px;
+                width: 12px;
+                height: 12px;
+                border: 2px solid {cls.BORDER};
+                border-radius: 6px;
+                background-color: {cls.BG_MEDIUM};
+            }}
+            QRadioButton::indicator:checked {{
+                background-color: {cls.PRIMARY};
+                border-color: {cls.PRIMARY};
+            }}
+            QRadioButton::indicator:hover {{
+                border-color: {cls.SECONDARY};
             }}
             QLabel {{
                 color: {cls.TEXT_PRIMARY};
