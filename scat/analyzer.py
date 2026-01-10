@@ -54,14 +54,14 @@ class AnalysisResult:
         summary = {
             'filename': self.filename,
             'n_total': self.n_total,
-            # Normal → ROD → Artifact 순서
+            # Order: Normal → ROD → Artifact
             'n_normal': self.n_normal,
             'n_rod': self.n_rod,
             'n_artifact': self.n_artifact,
             'rod_fraction': self.rod_fraction,
         }
         
-        # Normal 통계
+        # Normal statistics
         if normal_deposits:
             summary['normal_mean_area'] = np.mean([d.area for d in normal_deposits])
             summary['normal_std_area'] = np.std([d.area for d in normal_deposits])
@@ -79,7 +79,7 @@ class AnalysisResult:
             summary['normal_mean_lightness'] = np.nan
             summary['normal_mean_circularity'] = np.nan
         
-        # ROD 통계
+        # ROD statistics
         if rod_deposits:
             summary['rod_mean_area'] = np.mean([d.area for d in rod_deposits])
             summary['rod_std_area'] = np.std([d.area for d in rod_deposits])
@@ -97,7 +97,7 @@ class AnalysisResult:
             summary['rod_mean_lightness'] = np.nan
             summary['rod_mean_circularity'] = np.nan
         
-        # 전체 통계
+        # Total statistics
         if valid_deposits:
             summary['total_iod'] = sum(d.iod for d in valid_deposits)
             summary['mean_area'] = np.mean([d.area for d in valid_deposits])
@@ -143,7 +143,7 @@ class Analyzer:
         deposits = self.detector.detect(image)
         deposits = self.extractor.extract_features(image, deposits)
         
-        # Classifier별 predict 호출
+        # Call predict for each classifier
         from .classifier import ThresholdClassifier, RandomForestClassifier, CNNClassifier
         if isinstance(self.classifier, (ThresholdClassifier, RandomForestClassifier)):
             deposits = self.classifier.predict(deposits)

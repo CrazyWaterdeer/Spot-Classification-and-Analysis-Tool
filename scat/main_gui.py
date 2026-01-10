@@ -64,12 +64,12 @@ class NoScrollComboBox(QComboBox):
 class Theme:
     """SCAT Application Color Theme - Dark with Coral Accent (minimal use)"""
     
-    # Primary accent - DIC2497 (포인트용으로만 최소 사용)
-    PRIMARY = "#DA4E42"        # Coral red - 선택된 탭, 주요 버튼만
+    # Primary accent - DIC2497 (minimal use for accents only)
+    PRIMARY = "#DA4E42"        # Coral red - selected tabs, primary buttons only
     PRIMARY_DARK = "#C44539"
     PRIMARY_LIGHT = "#E8695E"
     
-    # Secondary - DIC540 (일반 UI 요소)
+    # Secondary - DIC540 (general UI elements)
     SECONDARY = "#636867"      # Gray-green
     SECONDARY_DARK = "#525756"
     SECONDARY_LIGHT = "#7A7F7E"
@@ -242,13 +242,28 @@ class Theme:
             QSpinBox::up-button, QSpinBox::down-button,
             QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {{
                 background-color: {Theme.BG_LIGHT};
-                border: none;
-                width: 22px;
-                border-radius: 3px;
+                border: 1px solid {Theme.BORDER};
+                width: 20px;
+                border-radius: 2px;
+                margin: 1px;
             }}
             QSpinBox::up-button:hover, QSpinBox::down-button:hover,
             QDoubleSpinBox::up-button:hover, QDoubleSpinBox::down-button:hover {{
                 background-color: {Theme.SECONDARY};
+            }}
+            QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {{
+                width: 10px;
+                height: 10px;
+                border-left: 5px solid transparent;
+                border-right: 5px solid transparent;
+                border-bottom: 6px solid {Theme.TEXT_PRIMARY};
+            }}
+            QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {{
+                width: 10px;
+                height: 10px;
+                border-left: 5px solid transparent;
+                border-right: 5px solid transparent;
+                border-top: 6px solid {Theme.TEXT_PRIMARY};
             }}
             
             /* Labels - no background, bold for form labels */
@@ -813,970 +828,6 @@ class NumericTableWidgetItem(QTableWidgetItem):
         return super().__lt__(other)
 
 
-class DepositItemWidget(QGraphicsPathItem):
-    """Graphics item for deposit in detail view."""
-    
-    COLORS = {
-        'rod': QColor(255, 0, 0, 150),
-        'normal': QColor(0, 255, 0, 150),
-        'artifact': QColor(128, 128, 128, 150),
-        'unknown': QColor(255, 255, 0, 150)
-    }
-    
-    def __init__(self, deposit_data: dict, scale: float = 1.0):
-        super().__init__()
-        self.deposit_data = deposit_data
-        self.scale = scale
-        self.selected = False
-        self._create_path()
-        self._update_appearance()
-    
-    def _create_path(self):
-        from PySide6.QtGui import QPainterPath
-        path = QPainterPath()
-        
-        # Check if contour data is available
-        contour = self.deposit_data.get('contour', [])
-        
-        if contour and len(contour) > 2:
-            # Use actual contour points
-            if isinstance(contour[0], (list, tuple)) and len(contour[0]) >= 2:
-                # Contour is list of [x, y] points
-                path.moveTo(contour[0][0] * self.scale, contour[0][1] * self.scale)
-                for point in contour[1:]:
-                    if len(point) >= 2:
-                        path.lineTo(point[0] * self.scale, point[1] * self.scale)
-                path.closeSubpath()
-            else:
-                # Fallback to ellipse
-                self._create_ellipse_path(path)
-        else:
-            # No contour - use ellipse approximation
-            self._create_ellipse_path(path)
-        
-        self.setPath(path)
-    
-    def _create_ellipse_path(self, path):
-        """Create ellipse path from bounding box or area."""
-        cx = self.deposit_data.get('x', self.deposit_data.get('centroid_x', 0))
-        cy = self.deposit_data.get('y', self.deposit_data.get('centroid_y', 0))
-        
-        width = self.deposit_data.get('width', 0)
-        height = self.deposit_data.get('height', 0)
-        
-        if width > 0 and height > 0:
-            w = width * self.scale
-            h = height * self.scale
-            path.addEllipse(cx * self.scale - w/2, cy * self.scale - h/2, w, h)
-        else:
-            area = self.deposit_data.get('area_px', self.deposit_data.get('area', 100))
-            aspect = self.deposit_data.get('aspect_ratio', 1.0)
-            base_radius = np.sqrt(area / np.pi)
-            
-            if aspect >= 1:
-                w = base_radius * 2 / np.sqrt(aspect) * self.scale
-                h = base_radius * 2 * np.sqrt(aspect) * self.scale
-            else:
-                w = base_radius * 2 * self.scale
-                h = base_radius * 2 * self.scale
-            
-            path.addEllipse(cx * self.scale - w/2, cy * self.scale - h/2, w, h)
-    
-    def _update_appearance(self):
-        label = self.deposit_data.get('label', 'unknown')
-        color = self.COLORS.get(label, self.COLORS['unknown'])
-        
-        # Line width: 0.6 when selected, 0.3 when not
-        # Alpha: 30 when selected, 10 when not
-        line_width = 0.6 if self.selected else 0.3
-        alpha = 30 if self.selected else 10
-        
-        self.setPen(QPen(color.darker(150), line_width))
-        fill = QColor(color)
-        fill.setAlpha(alpha)
-        self.setBrush(QBrush(fill))
-    
-    def set_label(self, label: str):
-        self.deposit_data['label'] = label
-        self._update_appearance()
-    
-    def set_selected(self, selected: bool):
-        self.selected = selected
-        self._update_appearance()
-    
-    def update_group_visual(self, group_id):
-        """Update visual to show group membership."""
-        self.deposit_data['group_id'] = group_id
-        label = self.deposit_data.get('label', 'unknown')
-        color = self.COLORS.get(label, self.COLORS['unknown'])
-        
-        # Line width: 0.6 when selected, 0.3 when not
-        line_width = 0.6 if self.selected else 0.3
-        
-        if group_id is not None:
-            # Dashed border for grouped items
-            pen = QPen(color.darker(150), line_width, Qt.DashLine)
-        else:
-            pen = QPen(color.darker(150), line_width)
-        
-        self.setPen(pen)
-    
-    def paint(self, painter, option, widget=None):
-        """Override to prevent Qt's default selection dotted line."""
-        from PySide6.QtWidgets import QStyle
-        option.state &= ~QStyle.State_Selected
-        super().paint(painter, option, widget)
-
-
-class DetailImageViewer(QGraphicsView):
-    """Image viewer with selectable deposits for detail dialog."""
-    
-    MODE_SELECT = 0
-    MODE_ADD = 1
-    
-    deposit_selected = Signal(int)  # Emit deposit index
-    deposit_added = Signal(QRectF)  # Emit rect for new deposit
-    
-    def __init__(self, parent=None):
-        super().__init__()
-        self.parent_dialog = parent
-        self.scene = QGraphicsScene()
-        self.setScene(self.scene)
-        self.setRenderHint(QPainter.Antialiasing)
-        self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
-        self.setDragMode(QGraphicsView.ScrollHandDrag)  # Enable drag by default
-        
-        self.pixmap_item = None
-        self.deposit_items: List[DepositItemWidget] = []
-        self.selected_item: Optional[DepositItemWidget] = None
-        self.selected_items: List[DepositItemWidget] = []  # Multi-select support
-        self.scale_factor = 1.0
-        
-        self.edit_mode = self.MODE_SELECT
-        self.drawing = False
-        self.start_point = None
-        self.rect_item = None
-    
-    def set_mode(self, mode: int):
-        self.edit_mode = mode
-        if mode == self.MODE_SELECT:
-            self.setDragMode(QGraphicsView.ScrollHandDrag)
-        else:
-            self.setDragMode(QGraphicsView.NoDrag)
-    
-    def load_image(self, image_path: str):
-        self.scene.clear()
-        self.deposit_items.clear()
-        self.selected_item = None
-        self.selected_items.clear()
-        
-        pixmap = QPixmap(image_path)
-        if not pixmap.isNull():
-            self.pixmap_item = self.scene.addPixmap(pixmap)
-            self.setSceneRect(QRectF(pixmap.rect()))
-            self.fitInView(self.sceneRect(), Qt.KeepAspectRatio)
-    
-    def add_deposit(self, deposit_data: dict, index: int):
-        item = DepositItemWidget(deposit_data)
-        item.setData(0, index)  # Store index
-        item.setFlag(QGraphicsPathItem.ItemIsSelectable)
-        self.scene.addItem(item)
-        self.deposit_items.append(item)
-    
-    def remove_deposit_item(self, item: DepositItemWidget):
-        if item in self.deposit_items:
-            self.deposit_items.remove(item)
-            self.scene.removeItem(item)
-            if self.selected_item == item:
-                self.selected_item = None
-            if item in self.selected_items:
-                self.selected_items.remove(item)
-    
-    def clear_selection(self):
-        """Clear all selections."""
-        if self.selected_item:
-            self.selected_item.set_selected(False)
-            self.selected_item = None
-        for item in self.selected_items:
-            item.set_selected(False)
-        self.selected_items.clear()
-    
-    def wheelEvent(self, event):
-        factor = 1.15 if event.angleDelta().y() > 0 else 1 / 1.15
-        self.scale(factor, factor)
-    
-    def mousePressEvent(self, event):
-        if self.edit_mode == self.MODE_SELECT:
-            item = self.itemAt(event.pos())
-            
-            # Ctrl+click for multi-select
-            if event.modifiers() & Qt.ControlModifier:
-                if isinstance(item, DepositItemWidget):
-                    # Move existing selected_item to selected_items first
-                    if self.selected_item and self.selected_item not in self.selected_items:
-                        self.selected_items.append(self.selected_item)
-                        self.selected_item = None
-                    
-                    # Toggle selection
-                    if item in self.selected_items:
-                        item.set_selected(False)
-                        self.selected_items.remove(item)
-                    else:
-                        item.set_selected(True)
-                        self.selected_items.append(item)
-            else:
-                # Normal click - single selection
-                self.clear_selection()
-                
-                if isinstance(item, DepositItemWidget):
-                    self.selected_item = item
-                    item.set_selected(True)
-                    index = item.data(0)
-                    self.deposit_selected.emit(index)
-            
-            super().mousePressEvent(event)
-        
-        elif self.edit_mode == self.MODE_ADD:
-            self.drawing = True
-            self.start_point = self.mapToScene(event.pos())
-            from PySide6.QtWidgets import QGraphicsRectItem
-            self.rect_item = QGraphicsRectItem()
-            self.rect_item.setPen(QPen(QColor(0, 100, 255), 2, Qt.DashLine))
-            self.scene.addItem(self.rect_item)
-    
-    def mouseMoveEvent(self, event):
-        if self.edit_mode == self.MODE_ADD and self.drawing:
-            current = self.mapToScene(event.pos())
-            rect = QRectF(self.start_point, current).normalized()
-            self.rect_item.setRect(rect)
-        else:
-            super().mouseMoveEvent(event)
-    
-    def mouseReleaseEvent(self, event):
-        if self.edit_mode == self.MODE_ADD and self.drawing:
-            self.drawing = False
-            if self.rect_item:
-                rect = self.rect_item.rect()
-                self.scene.removeItem(self.rect_item)
-                self.rect_item = None
-                if rect.width() > 5 and rect.height() > 5:
-                    self.deposit_added.emit(rect)
-        else:
-            super().mouseReleaseEvent(event)
-
-
-class ImageDetailDialog(QDialog):
-    """Dialog for viewing and editing deposit classifications."""
-    
-    MAX_UNDO = 5  # 최대 undo 횟수
-    
-    def __init__(self, filename: str, output_dir: str, film_summary: pd.DataFrame, 
-                 deposit_data: pd.DataFrame, parent=None, input_dir: str = None):
-        super().__init__(parent)
-        self.filename = filename
-        self.output_dir = Path(output_dir)
-        self.input_dir = Path(input_dir) if input_dir else None
-        self.film_summary = film_summary
-        self.deposit_data = deposit_data
-        self.modified = False
-        
-        # Undo history
-        self._undo_stack: List[pd.DataFrame] = []
-        
-        # Get deposits for this file and remove duplicates by id
-        self.file_deposits = deposit_data[deposit_data['filename'] == filename].copy()
-        # Remove duplicates keeping first occurrence
-        if 'id' in self.file_deposits.columns:
-            self.file_deposits = self.file_deposits.drop_duplicates(subset=['id'], keep='first')
-        self.file_deposits = self.file_deposits.reset_index(drop=True)
-        
-        self.setWindowTitle(f"Edit Deposits - {filename}")
-        self.setMinimumSize(1200, 800)
-        
-        self._setup_ui()
-        self._load_data()
-    
-    def _setup_ui(self):
-        layout = QHBoxLayout(self)
-        
-        # Left: Image viewer
-        left_widget = QWidget()
-        left_layout = QVBoxLayout(left_widget)
-        
-        self.viewer = DetailImageViewer(self)
-        self.viewer.deposit_selected.connect(self._on_deposit_selected)
-        self.viewer.deposit_added.connect(self._on_deposit_added)
-        left_layout.addWidget(self.viewer)
-        
-        # Mode buttons under viewer
-        mode_layout = QHBoxLayout()
-        self.btn_select_mode = QPushButton("🔍 Select/Move")
-        self.btn_select_mode.setCheckable(True)
-        self.btn_select_mode.setChecked(True)
-        self.btn_select_mode.clicked.connect(lambda: self._set_mode(0))
-        mode_layout.addWidget(self.btn_select_mode)
-        
-        self.btn_add_mode = QPushButton("➕ Add Deposit")
-        self.btn_add_mode.setCheckable(True)
-        self.btn_add_mode.clicked.connect(lambda: self._set_mode(1))
-        mode_layout.addWidget(self.btn_add_mode)
-        
-        left_layout.addLayout(mode_layout)
-        
-        layout.addWidget(left_widget, 2)
-        
-        # Right: Controls
-        right_widget = QWidget()
-        right_layout = QVBoxLayout(right_widget)
-        
-        # Label buttons
-        label_group = QGroupBox("Set Label")
-        label_layout = QVBoxLayout()
-        
-        btn_normal = QPushButton("✓ Normal (1)")
-        btn_normal.setStyleSheet(Theme.button_style(Theme.NORMAL, "#FFFFFF", Theme.NORMAL_DARK))
-        btn_normal.clicked.connect(lambda: self._set_label("normal"))
-        label_layout.addWidget(btn_normal)
-        
-        btn_rod = QPushButton("⬤ ROD (2)")
-        btn_rod.setStyleSheet(Theme.button_style(Theme.ROD, "#FFFFFF", Theme.ROD_DARK))
-        btn_rod.clicked.connect(lambda: self._set_label("rod"))
-        label_layout.addWidget(btn_rod)
-        
-        btn_artifact = QPushButton("✗ Artifact (3)")
-        btn_artifact.setStyleSheet(Theme.button_style(Theme.ARTIFACT, "#FFFFFF", Theme.ARTIFACT_DARK))
-        btn_artifact.clicked.connect(lambda: self._set_label("artifact"))
-        label_layout.addWidget(btn_artifact)
-        
-        btn_delete = QPushButton("🗑 Delete (D)")
-        btn_delete.setStyleSheet(Theme.button_style("#D32F2F", "#FFFFFF", "#B71C1C"))
-        btn_delete.clicked.connect(self._delete_selected)
-        label_layout.addWidget(btn_delete)
-        
-        label_group.setLayout(label_layout)
-        right_layout.addWidget(label_group)
-        
-        # Edit buttons (Merge, Group, Ungroup)
-        edit_group = QGroupBox("Edit (Ctrl+Click to multi-select)")
-        edit_layout = QHBoxLayout()
-        
-        btn_merge = QPushButton("Merge (M)")
-        btn_merge.clicked.connect(self._merge_selected)
-        edit_layout.addWidget(btn_merge)
-        
-        btn_group = QPushButton("Group (G)")
-        btn_group.clicked.connect(self._group_selected)
-        edit_layout.addWidget(btn_group)
-        
-        btn_ungroup = QPushButton("Ungroup (U)")
-        btn_ungroup.clicked.connect(self._ungroup_selected)
-        edit_layout.addWidget(btn_ungroup)
-        
-        edit_group.setLayout(edit_layout)
-        right_layout.addWidget(edit_group)
-        
-        # Deposit table
-        table_group = QGroupBox("Deposits")
-        table_layout = QVBoxLayout()
-        
-        self.deposit_table = QTableWidget()
-        self.deposit_table.setColumnCount(4)
-        self.deposit_table.setHorizontalHeaderLabels(["ID", "Area", "Circ", "Label"])
-        self.deposit_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        
-        # Table settings: read-only, hide row numbers, row selection, sorting
-        self.deposit_table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.deposit_table.verticalHeader().setVisible(False)
-        self.deposit_table.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
-        self.deposit_table.verticalHeader().setDefaultSectionSize(25)
-        self.deposit_table.setSortingEnabled(True)
-        self.deposit_table.setSelectionBehavior(QTableWidget.SelectRows)
-        self.deposit_table.setSelectionMode(QTableWidget.SingleSelection)
-        
-        self.deposit_table.itemSelectionChanged.connect(self._on_table_select)
-        self.deposit_table.doubleClicked.connect(self._on_table_double_click)
-        table_layout.addWidget(self.deposit_table)
-        
-        table_group.setLayout(table_layout)
-        right_layout.addWidget(table_group)
-        
-        # Statistics
-        stats_group = QGroupBox("Statistics")
-        stats_layout = QFormLayout()
-        self.lbl_total = QLabel("0")
-        self.lbl_normal = QLabel("0")
-        self.lbl_rod = QLabel("0")
-        self.lbl_artifact = QLabel("0")
-        stats_layout.addRow("Total:", self.lbl_total)
-        stats_layout.addRow("Normal:", self.lbl_normal)
-        stats_layout.addRow("ROD:", self.lbl_rod)
-        stats_layout.addRow("Artifact:", self.lbl_artifact)
-        stats_group.setLayout(stats_layout)
-        right_layout.addWidget(stats_group)
-        
-        # Buttons
-        btn_layout = QHBoxLayout()
-        
-        save_btn = QPushButton("💾 Save Changes")
-        save_btn.clicked.connect(self._save_changes)
-        btn_layout.addWidget(save_btn)
-        
-        cancel_btn = QPushButton("Cancel")
-        cancel_btn.clicked.connect(self.reject)
-        btn_layout.addWidget(cancel_btn)
-        
-        right_layout.addLayout(btn_layout)
-        
-        layout.addWidget(right_widget, 1)
-        
-        # Shortcuts
-        QShortcut(QKeySequence("1"), self, lambda: self._set_label("normal"))
-        QShortcut(QKeySequence("2"), self, lambda: self._set_label("rod"))
-        QShortcut(QKeySequence("3"), self, lambda: self._set_label("artifact"))
-        QShortcut(QKeySequence("D"), self, self._delete_selected)
-        QShortcut(QKeySequence("Delete"), self, self._delete_selected)
-        QShortcut(QKeySequence("M"), self, self._merge_selected)
-        QShortcut(QKeySequence("G"), self, self._group_selected)
-        QShortcut(QKeySequence("U"), self, self._ungroup_selected)
-        QShortcut(QKeySequence("Ctrl+Z"), self, self._undo)  # Undo
-        QShortcut(QKeySequence(Qt.Key_Escape), self, self.close)
-    
-    def _save_state(self):
-        """현재 상태를 undo 스택에 저장"""
-        self._undo_stack.append(self.file_deposits.copy())
-        
-        # 최대 개수 유지
-        if len(self._undo_stack) > self.MAX_UNDO:
-            self._undo_stack.pop(0)
-    
-    def _undo(self):
-        """이전 상태로 복원"""
-        if not self._undo_stack:
-            return
-        
-        self.file_deposits = self._undo_stack.pop()
-        
-        # 뷰어 아이템 다시 그리기
-        for item in self.viewer.deposit_items[:]:
-            self.viewer.scene.removeItem(item)
-        self.viewer.deposit_items.clear()
-        self.viewer.selected_item = None
-        
-        # 다시 로드
-        self._add_deposits_to_viewer()
-        self._update_table()
-        self.modified = True
-    
-    def _add_deposits_to_viewer(self):
-        """file_deposits를 뷰어에 추가"""
-        for idx, row in self.file_deposits.iterrows():
-            deposit_id = row.get('id', idx)
-            info = self.contour_data.get(deposit_id, {})
-            deposit_data = {
-                'id': deposit_id,
-                'label': row.get('label', 'unknown'),
-                'area': row.get('area', row.get('area_px', 0)),
-                'x': row.get('x', 0),
-                'y': row.get('y', 0),
-                'width': row.get('width', 20),
-                'height': row.get('height', 20),
-                'circularity': row.get('circularity', 0),
-                'contour': info.get('contour', []) if isinstance(info, dict) else info,
-                'merged': info.get('merged', False) if isinstance(info, dict) else False,
-                'group_id': info.get('group_id', None) if isinstance(info, dict) else None
-            }
-            item = DepositItemWidget(deposit_data, self.viewer.scale_factor)
-            item.setPos(deposit_data['x'] * self.viewer.scale_factor, 
-                       deposit_data['y'] * self.viewer.scale_factor)
-            self.viewer.scene.addItem(item)
-            self.viewer.deposit_items.append(item)
-    
-    def _load_data(self):
-        image_loaded = False
-        using_annotated = False
-        stem = Path(self.filename).stem
-        
-        # Try to load contour data from JSON (unified format first, then legacy)
-        self.contour_data = {}
-        self.json_data = {}  # Store full JSON data for save
-        self.next_group_id = 1
-        
-        # Check for new format first, then legacy
-        json_path = self.output_dir / 'deposits' / f"{stem}.labels.json"
-        if not json_path.exists():
-            json_path = self.output_dir / 'deposits' / f"{stem}_deposits.json"
-        
-        if json_path.exists():
-            import json
-            try:
-                with open(json_path, 'r') as f:
-                    data = json.load(f)
-                    self.json_data = data
-                    self.next_group_id = data.get('next_group_id', 1)
-                    for dep in data.get('deposits', []):
-                        dep_id = dep.get('id', len(self.contour_data))
-                        self.contour_data[dep_id] = {
-                            'contour': dep.get('contour', []),
-                            'merged': dep.get('merged', False),
-                            'group_id': dep.get('group_id', None)
-                        }
-            except Exception:
-                pass
-        
-        # Priority 1: Try to find original image in input_dir
-        if self.input_dir:
-            for ext in ['.tif', '.tiff', '.png', '.jpg', '.jpeg', '.TIF', '.TIFF', '.PNG', '.JPG']:
-                orig_path = self.input_dir / f"{stem}{ext}"
-                if orig_path.exists():
-                    self.viewer.load_image(str(orig_path))
-                    image_loaded = True
-                    break
-            if not image_loaded:
-                # Also try with original filename
-                orig_path = self.input_dir / self.filename
-                if orig_path.exists():
-                    self.viewer.load_image(str(orig_path))
-                    image_loaded = True
-        
-        # Priority 2: Try config's last_input_dir
-        if not image_loaded:
-            input_dir = config.get("last_input_dir", "")
-            if input_dir:
-                for ext in ['.tif', '.tiff', '.png', '.jpg', '.jpeg', '.TIF', '.TIFF', '.PNG', '.JPG']:
-                    orig_path = Path(input_dir) / f"{stem}{ext}"
-                    if orig_path.exists():
-                        self.viewer.load_image(str(orig_path))
-                        image_loaded = True
-                        break
-        
-        # Priority 3: Fallback to annotated image (no markers needed - already drawn)
-        if not image_loaded:
-            annotated_path = self.output_dir / 'annotated' / f"{stem}_annotated.png"
-            if annotated_path.exists():
-                self.viewer.load_image(str(annotated_path))
-                image_loaded = True
-                using_annotated = True
-        
-        # Add deposit markers ONLY if we loaded an original (non-annotated) image
-        if not using_annotated:
-            for idx in range(len(self.file_deposits)):
-                row = self.file_deposits.iloc[idx]
-                deposit_data = row.to_dict()
-                # Add contour and group info if available
-                deposit_id = deposit_data.get('id', idx)
-                if deposit_id in self.contour_data:
-                    info = self.contour_data[deposit_id]
-                    deposit_data['contour'] = info.get('contour', [])
-                    deposit_data['merged'] = info.get('merged', False)
-                    deposit_data['group_id'] = info.get('group_id', None)
-                self.viewer.add_deposit(deposit_data, idx)
-        
-        self._update_table()
-        self._update_stats()
-    
-    def _update_table(self):
-        self.deposit_table.setSortingEnabled(False)  # Disable during update
-        self.deposit_table.setRowCount(len(self.file_deposits))
-        
-        for i, (_, row) in enumerate(self.file_deposits.iterrows()):
-            # Use NumericTableWidgetItem for proper numeric sorting
-            dep_id = row.get('id', i)
-            area = row.get('area_px', row.get('area', 0))
-            circularity = row.get('circularity', 0)
-            
-            self.deposit_table.setItem(i, 0, NumericTableWidgetItem(dep_id))
-            self.deposit_table.setItem(i, 1, NumericTableWidgetItem(area, "{:.0f}"))
-            self.deposit_table.setItem(i, 2, NumericTableWidgetItem(circularity, "{:.3f}"))
-            self.deposit_table.setItem(i, 3, QTableWidgetItem(row.get('label', 'unknown')))
-        
-        self.deposit_table.setSortingEnabled(True)
-    
-    def _update_stats(self):
-        labels = self.file_deposits['label'].tolist()
-        self.lbl_total.setText(str(len(labels)))
-        self.lbl_normal.setText(str(labels.count('normal')))
-        self.lbl_rod.setText(str(labels.count('rod')))
-        self.lbl_artifact.setText(str(labels.count('artifact')))
-    
-    def _on_deposit_selected(self, index: int):
-        if 0 <= index < self.deposit_table.rowCount():
-            self.deposit_table.selectRow(index)
-    
-    def _on_table_select(self):
-        rows = self.deposit_table.selectionModel().selectedRows()
-        if rows:
-            row_idx = rows[0].row()
-            # Get ID from the table (column 0) - sorted may differ from list order
-            id_item = self.deposit_table.item(row_idx, 0)
-            if id_item:
-                deposit_id = int(id_item.text())
-                # Find the corresponding deposit item by ID
-                for item in self.viewer.deposit_items:
-                    item_id = item.deposit_data.get('id', -1)
-                    is_selected = (item_id == deposit_id)
-                    item.set_selected(is_selected)
-                    if is_selected:
-                        self.viewer.selected_item = item
-    
-    def _on_table_double_click(self, index):
-        """Navigate to deposit location on double-click."""
-        row_idx = index.row()
-        id_item = self.deposit_table.item(row_idx, 0)
-        if id_item:
-            deposit_id = int(id_item.text())
-            # Find the corresponding deposit item by ID
-            for item in self.viewer.deposit_items:
-                item_id = item.deposit_data.get('id', -1)
-                if item_id == deposit_id:
-                    # Center view on the deposit
-                    self.viewer.centerOn(item)
-                    # Optionally zoom in a bit
-                    self.viewer.scale(1.5, 1.5)
-                    break
-    
-    def _set_mode(self, mode: int):
-        """Switch between Select and Add mode."""
-        self.viewer.set_mode(mode)
-        self.btn_select_mode.setChecked(mode == 0)
-        self.btn_add_mode.setChecked(mode == 1)
-    
-    def _on_deposit_added(self, rect: QRectF):
-        """Handle new deposit added by drawing rectangle."""
-        self._save_state()  # 추가 전 상태 저장
-        
-        # Create new deposit data
-        cx = rect.center().x()
-        cy = rect.center().y()
-        area = rect.width() * rect.height()
-        
-        # Estimate circularity from rect
-        perimeter = 2 * (rect.width() + rect.height())
-        circularity = 4 * np.pi * area / (perimeter ** 2) if perimeter > 0 else 0
-        
-        new_id = len(self.file_deposits)
-        
-        # Add to dataframe
-        new_row = {
-            'id': new_id,
-            'filename': self.filename,
-            'x': cx,
-            'y': cy,
-            'area_px': area,
-            'circularity': circularity,
-            'label': 'normal',  # Default label
-            'confidence': 1.0
-        }
-        self.file_deposits = pd.concat([
-            self.file_deposits, 
-            pd.DataFrame([new_row])
-        ], ignore_index=True)
-        
-        # Add visual item
-        self.viewer.add_deposit(new_row, len(self.viewer.deposit_items))
-        
-        self._update_table()
-        self._update_stats()
-        self.modified = True
-        
-        # Switch back to select mode
-        self._set_mode(0)
-    
-    def _set_label(self, label: str):
-        rows = self.deposit_table.selectionModel().selectedRows()
-        if not rows:
-            return
-        
-        self._save_state()  # 라벨 변경 전 상태 저장
-        
-        idx = rows[0].row()
-        
-        # Update dataframe
-        self.file_deposits.at[idx, 'label'] = label
-        
-        # Update viewer
-        if idx < len(self.viewer.deposit_items):
-            self.viewer.deposit_items[idx].set_label(label)
-        
-        self._update_table()
-        self._update_stats()
-        self.modified = True
-    
-    def _delete_selected(self):
-        rows = self.deposit_table.selectionModel().selectedRows()
-        if not rows:
-            return
-        
-        self._save_state()  # 삭제 전 상태 저장
-        
-        idx = rows[0].row()
-        
-        # Remove from dataframe
-        self.file_deposits = self.file_deposits.drop(self.file_deposits.index[idx]).reset_index(drop=True)
-        
-        # Remove from viewer
-        if idx < len(self.viewer.deposit_items):
-            item = self.viewer.deposit_items[idx]
-            self.viewer.scene.removeItem(item)
-            self.viewer.deposit_items.remove(item)
-            
-            # Update indices
-            for i, it in enumerate(self.viewer.deposit_items):
-                it.setData(0, i)
-        
-        self._update_table()
-        self._update_stats()
-        self.modified = True
-    
-    def _merge_selected(self):
-        """Merge multiple selected deposits into one."""
-        if len(self.viewer.selected_items) < 2:
-            return
-        
-        self._save_state()
-        
-        import cv2
-        
-        # Collect all contour points
-        all_points = []
-        indices_to_remove = []
-        
-        for item in self.viewer.selected_items:
-            idx = item.data(0)
-            if idx is not None and idx < len(self.file_deposits):
-                indices_to_remove.append(idx)
-                dep_id = self.file_deposits.iloc[idx].get('id', idx)
-                info = self.contour_data.get(dep_id, {})
-                contour = info.get('contour', []) if isinstance(info, dict) else info
-                if contour:
-                    all_points.extend(contour)
-        
-        if len(all_points) < 3:
-            return
-        
-        # Create convex hull
-        hull = cv2.convexHull(np.array(all_points))
-        
-        # Calculate properties
-        area = cv2.contourArea(hull)
-        perimeter = cv2.arcLength(hull, True)
-        circularity = 4 * np.pi * area / (perimeter ** 2) if perimeter > 0 else 0
-        bx, by, bw, bh = cv2.boundingRect(hull)
-        
-        M = cv2.moments(hull)
-        cx = int(M["m10"] / M["m00"]) if M["m00"] > 0 else bx + bw // 2
-        cy = int(M["m01"] / M["m00"]) if M["m00"] > 0 else by + bh // 2
-        
-        # Create new deposit
-        new_id = int(self.file_deposits['id'].max() + 1) if len(self.file_deposits) > 0 else 0
-        
-        new_row = {
-            'id': new_id,
-            'filename': self.filename,
-            'x': cx,
-            'y': cy,
-            'width': bw,
-            'height': bh,
-            'area': area,
-            'circularity': circularity,
-            'label': 'normal',
-            'confidence': 1.0
-        }
-        
-        # Remove old deposits (in reverse order to maintain indices)
-        for idx in sorted(indices_to_remove, reverse=True):
-            dep_id = self.file_deposits.iloc[idx].get('id', idx)
-            if dep_id in self.contour_data:
-                del self.contour_data[dep_id]
-            self.file_deposits = self.file_deposits.drop(self.file_deposits.index[idx])
-        
-        self.file_deposits = self.file_deposits.reset_index(drop=True)
-        
-        # Add new merged deposit
-        self.file_deposits = pd.concat([
-            self.file_deposits,
-            pd.DataFrame([new_row])
-        ], ignore_index=True)
-        
-        # Add contour data
-        self.contour_data[new_id] = {
-            'contour': hull.squeeze().tolist(),
-            'merged': True,
-            'group_id': None
-        }
-        
-        # Refresh viewer
-        self.viewer.clear_selection()
-        for item in self.viewer.deposit_items[:]:
-            self.viewer.scene.removeItem(item)
-        self.viewer.deposit_items.clear()
-        self._add_deposits_to_viewer()
-        
-        self._update_table()
-        self._update_stats()
-        self.modified = True
-    
-    def _group_selected(self):
-        """Group selected deposits together."""
-        if len(self.viewer.selected_items) < 2:
-            return
-        
-        self._save_state()
-        
-        group_id = self.next_group_id
-        self.next_group_id += 1
-        
-        for item in self.viewer.selected_items:
-            idx = item.data(0)
-            if idx is not None and idx < len(self.file_deposits):
-                dep_id = self.file_deposits.iloc[idx].get('id', idx)
-                if dep_id in self.contour_data:
-                    self.contour_data[dep_id]['group_id'] = group_id
-                else:
-                    self.contour_data[dep_id] = {'contour': [], 'merged': False, 'group_id': group_id}
-                # Update visual
-                item.update_group_visual(group_id)
-        
-        self.viewer.clear_selection()
-        self.modified = True
-    
-    def _ungroup_selected(self):
-        """Remove selected deposits from their group."""
-        items = self.viewer.selected_items if self.viewer.selected_items else (
-            [self.viewer.selected_item] if self.viewer.selected_item else []
-        )
-        
-        if not items:
-            return
-        
-        has_grouped = False
-        for item in items:
-            idx = item.data(0)
-            if idx is not None and idx < len(self.file_deposits):
-                dep_id = self.file_deposits.iloc[idx].get('id', idx)
-                info = self.contour_data.get(dep_id, {})
-                if isinstance(info, dict) and info.get('group_id') is not None:
-                    has_grouped = True
-                    break
-        
-        if has_grouped:
-            self._save_state()
-        
-        for item in items:
-            idx = item.data(0)
-            if idx is not None and idx < len(self.file_deposits):
-                dep_id = self.file_deposits.iloc[idx].get('id', idx)
-                if dep_id in self.contour_data and isinstance(self.contour_data[dep_id], dict):
-                    self.contour_data[dep_id]['group_id'] = None
-                item.update_group_visual(None)
-        
-        self.viewer.clear_selection()
-        self.modified = True
-    
-    def _save_changes(self):
-        if not self.modified:
-            self.accept()
-            return
-        
-        try:
-            import json
-            
-            # Update all_deposits.csv
-            all_deposits_path = self.output_dir / 'all_deposits.csv'
-            if all_deposits_path.exists():
-                all_df = pd.read_csv(all_deposits_path)
-                # Remove old data for this file
-                all_df = all_df[all_df['filename'] != self.filename]
-                # Add updated data
-                all_df = pd.concat([all_df, self.file_deposits], ignore_index=True)
-                all_df.to_csv(all_deposits_path, index=False)
-            
-            # Update individual deposit file (CSV)
-            deposits_dir = self.output_dir / 'deposits'
-            if deposits_dir.exists():
-                stem = Path(self.filename).stem
-                deposit_file = deposits_dir / f"{stem}_deposits.csv"
-                self.file_deposits.to_csv(deposit_file, index=False)
-                
-                # Also update JSON in unified format
-                deposits_data = []
-                for idx, row in self.file_deposits.iterrows():
-                    dep_id = row.get('id', idx)
-                    info = self.contour_data.get(dep_id, {})
-                    deposit_dict = {
-                        'id': int(dep_id),
-                        'contour': info.get('contour', []),
-                        'x': int(row.get('x', 0)),
-                        'y': int(row.get('y', 0)),
-                        'width': int(row.get('width', 20)),
-                        'height': int(row.get('height', 20)),
-                        'area': float(row.get('area', row.get('area_px', 0))),
-                        'circularity': float(row.get('circularity', 0)),
-                        'label': row.get('label', 'unknown'),
-                        'confidence': float(row.get('confidence', 1.0)),
-                        'merged': info.get('merged', False),
-                        'group_id': info.get('group_id', None)
-                    }
-                    deposits_data.append(deposit_dict)
-                
-                json_path = deposits_dir / f"{stem}.labels.json"
-                with open(json_path, 'w') as f:
-                    json.dump({
-                        'image_file': self.filename,
-                        'next_group_id': self.next_group_id,
-                        'deposits': deposits_data
-                    }, f, indent=2)
-                
-                # Remove legacy format if exists
-                legacy_json = deposits_dir / f"{stem}_deposits.json"
-                if legacy_json.exists():
-                    legacy_json.unlink()
-            
-            # Update film_summary.csv
-            summary_path = self.output_dir / 'film_summary.csv'
-            if summary_path.exists():
-                summary_df = pd.read_csv(summary_path)
-                
-                # Recalculate stats for this file
-                labels = self.file_deposits['label'].tolist()
-                n_normal = labels.count('normal')
-                n_rod = labels.count('rod')
-                n_artifact = labels.count('artifact')
-                n_total = n_normal + n_rod
-                rod_fraction = n_rod / n_total if n_total > 0 else 0
-                
-                # Update row
-                mask = summary_df['filename'] == self.filename
-                if mask.any():
-                    summary_df.loc[mask, 'n_normal'] = n_normal
-                    summary_df.loc[mask, 'n_rod'] = n_rod
-                    summary_df.loc[mask, 'n_artifact'] = n_artifact
-                    summary_df.loc[mask, 'n_total'] = n_total
-                    summary_df.loc[mask, 'rod_fraction'] = rod_fraction
-                    summary_df.to_csv(summary_path, index=False)
-            
-            QMessageBox.information(self, "Saved", "Changes saved successfully!")
-            self.accept()
-            
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to save: {e}")
-    
-    def closeEvent(self, event):
-        if self.modified:
-            reply = QMessageBox.question(
-                self, "Unsaved Changes",
-                "You have unsaved changes. Save before closing?",
-                QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel
-            )
-            
-            if reply == QMessageBox.Save:
-                self._save_changes()
-            elif reply == QMessageBox.Cancel:
-                event.ignore()
-                return
-        
-        event.accept()
-
-
 class TrainingTab(QWidget):
     """Training tab for model training."""
     
@@ -2331,6 +1382,8 @@ class AnalysisTab(QWidget):
         self.groups_tree.setMaximumHeight(200)
         self.groups_tree.setIndentation(15)
         self.groups_tree.setAnimated(True)
+        # Single click to expand/collapse
+        self.groups_tree.itemClicked.connect(self._on_group_tree_clicked)
         groups_layout.addWidget(self.groups_tree)
         
         groups_group.setLayout(groups_layout)
@@ -2466,6 +1519,11 @@ class AnalysisTab(QWidget):
         """Enable/disable groups UI based on checkbox."""
         self.create_groups_btn.setEnabled(checked)
         self.groups_tree.setEnabled(checked)
+    
+    def _on_group_tree_clicked(self, item, column):
+        """Toggle expand/collapse on single click for parent items."""
+        if item.childCount() > 0:  # Only for parent items (groups)
+            item.setExpanded(not item.isExpanded())
     
     def _update_groups_list(self, group_data: dict):
         """Update the groups tree widget with group data."""
@@ -2880,7 +1938,7 @@ class ResultsTab(QWidget):
                 container_layout = QVBoxLayout(container)
                 container_layout.setContentsMargins(0, 0, 0, 0)
                 container_layout.addWidget(btn)
-                label = QLabel(name.replace('_', ' ').title())
+                label = QLabel(self._format_viz_name(name))
                 label.setAlignment(Qt.AlignCenter)
                 container_layout.addWidget(label)
                 
@@ -2934,6 +1992,47 @@ class ResultsTab(QWidget):
             self.stats_layout.addWidget(spatial_group)
         
         self.stats_layout.addStretch()
+    
+    def _format_viz_name(self, name: str) -> str:
+        """Format visualization key names for display."""
+        # Special mappings for known keys
+        name_map = {
+            'dashboard': 'Dashboard',
+            'pca': 'PCA Analysis',
+            'heatmap': 'Feature Heatmap',
+            'scatter_matrix': 'Feature Relationships',
+            'area_iod': 'Area vs IOD',
+            'nnd_histogram': 'Nearest Neighbor Distance',
+            'clark_evans': 'Clark-Evans Index',
+            'density_map': 'Deposit Density Map',
+            'quadrant_plot': 'Quadrant Analysis',
+            'violin_total_iod': 'Total IOD Distribution',
+            'violin_rod_fraction': 'ROD Fraction Distribution',
+            'violin_n_deposits': 'Deposit Count Distribution',
+            'violin_mean_area': 'Mean Area Distribution',
+        }
+        
+        if name in name_map:
+            return name_map[name]
+        
+        # Generic formatting: remove prefix, replace underscores, proper case
+        formatted = name
+        for prefix in ['violin_', 'box_', 'bar_', 'scatter_']:
+            if formatted.startswith(prefix):
+                formatted = formatted[len(prefix):]
+                break
+        
+        # Special abbreviations that should stay uppercase
+        upper_words = {'iod': 'IOD', 'rod': 'ROD', 'nnd': 'NND', 'pca': 'PCA'}
+        words = formatted.split('_')
+        formatted_words = []
+        for w in words:
+            if w.lower() in upper_words:
+                formatted_words.append(upper_words[w.lower()])
+            else:
+                formatted_words.append(w.capitalize())
+        
+        return ' '.join(formatted_words)
     
     def _generate_descriptive_stats(self, film_summary: pd.DataFrame) -> str:
         """Generate detailed descriptive statistics."""

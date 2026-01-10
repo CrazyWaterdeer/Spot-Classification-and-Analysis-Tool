@@ -296,8 +296,9 @@ class DepositGraphicsItem(QGraphicsPathItem):
 
 
 class ImageViewer(QGraphicsView):
-    MODE_SELECT = 0
-    MODE_ADD = 1
+    MODE_PAN = 0      # Pan/move view
+    MODE_SELECT = 1   # Select deposits (with box selection)
+    MODE_ADD = 2      # Add new deposits
     
     # Add shape modes
     ADD_RECT = 0
@@ -318,7 +319,7 @@ class ImageViewer(QGraphicsView):
         self.selected_items: List[DepositGraphicsItem] = []
         self.scale_factor = 1.0
         
-        self.edit_mode = self.MODE_SELECT
+        self.edit_mode = self.MODE_PAN  # Default to pan mode
         self.add_shape = self.ADD_RECT  # Default add shape
         self.drawing = False
         self.start_point = None
@@ -326,11 +327,12 @@ class ImageViewer(QGraphicsView):
         self.ellipse_item = None  # For circle preview
         self.freeform_points = []  # For freeform mode
         self.freeform_path_item = None
+        self.selection_rect = None  # For box selection
     
     def set_mode(self, mode: int):
         self.edit_mode = mode
         self.selected_items.clear()
-        if mode == self.MODE_SELECT:
+        if mode == self.MODE_PAN:
             self.setDragMode(QGraphicsView.ScrollHandDrag)
         else:
             self.setDragMode(QGraphicsView.NoDrag)
@@ -367,13 +369,17 @@ class ImageViewer(QGraphicsView):
         self.scale(factor, factor)
     
     def mousePressEvent(self, event):
-        if self.edit_mode == self.MODE_SELECT:
+        if self.edit_mode == self.MODE_PAN:
+            # Let Qt handle pan with ScrollHandDrag
+            super().mousePressEvent(event)
+            
+        elif self.edit_mode == self.MODE_SELECT:
             item = self.itemAt(event.pos())
             
-            # Ctrl+클릭: 다중 선택
+            # Ctrl+click: multi-select
             if event.modifiers() & Qt.ControlModifier:
                 if isinstance(item, DepositGraphicsItem):
-                    # 기존 selected_item이 있으면 selected_items에 추가
+                    # Add existing selected_item to selected_items if present
                     if self.selected_item and self.selected_item not in self.selected_items:
                         self.selected_items.append(self.selected_item)
                         self.selected_item = None
@@ -384,31 +390,40 @@ class ImageViewer(QGraphicsView):
                     else:
                         item.set_selected(True)
                         self.selected_items.append(item)
-                    # 선택 소스를 이미지로 설정
+                    # Set selection source to image
                     if self.parent_window:
                         self.parent_window._selection_source = 'image'
-            else:
-                # 일반 클릭: 단일 선택
-                # 기존 다중 선택 해제
+            elif isinstance(item, DepositGraphicsItem):
+                # Clicked on deposit: single selection
+                # Clear existing multi-selection
                 for sel_item in self.selected_items:
                     sel_item.set_selected(False)
                 self.selected_items.clear()
                 
-                if isinstance(item, DepositGraphicsItem):
-                    if self.selected_item and self.selected_item != item:
-                        self.selected_item.set_selected(False)
-                    self.selected_item = item
-                    item.set_selected(True)
-                    # 선택 소스를 이미지로 설정
-                    if self.parent_window:
-                        self.parent_window._selection_source = 'image'
-                else:
-                    # 빈 곳 클릭: 선택 해제
-                    if self.selected_item:
-                        self.selected_item.set_selected(False)
-                        self.selected_item = None
-            
-            super().mousePressEvent(event)
+                if self.selected_item and self.selected_item != item:
+                    self.selected_item.set_selected(False)
+                self.selected_item = item
+                item.set_selected(True)
+                # Set selection source to image
+                if self.parent_window:
+                    self.parent_window._selection_source = 'image'
+            else:
+                # Clicked on empty space: start box selection or clear selection
+                # Clear existing selection
+                for sel_item in self.selected_items:
+                    sel_item.set_selected(False)
+                self.selected_items.clear()
+                if self.selected_item:
+                    self.selected_item.set_selected(False)
+                    self.selected_item = None
+                
+                # Start box selection
+                self.drawing = True
+                self.start_point = self.mapToScene(event.pos())
+                self.selection_rect = QGraphicsRectItem()
+                self.selection_rect.setPen(QPen(QColor(100, 150, 255), 1, Qt.DashLine))
+                self.selection_rect.setBrush(QBrush(QColor(100, 150, 255, 30)))
+                self.scene.addItem(self.selection_rect)
             
         elif self.edit_mode == self.MODE_ADD:
             self.drawing = True
@@ -431,7 +446,12 @@ class ImageViewer(QGraphicsView):
                 self.scene.addItem(self.rect_item)
     
     def mouseMoveEvent(self, event):
-        if self.edit_mode == self.MODE_ADD and self.drawing:
+        if self.edit_mode == self.MODE_SELECT and self.drawing and self.selection_rect:
+            # Update selection rectangle
+            current = self.mapToScene(event.pos())
+            rect = QRectF(self.start_point, current).normalized()
+            self.selection_rect.setRect(rect)
+        elif self.edit_mode == self.MODE_ADD and self.drawing:
             current = self.mapToScene(event.pos())
             
             if self.add_shape == self.ADD_FREEFORM:
@@ -462,7 +482,26 @@ class ImageViewer(QGraphicsView):
             super().mouseMoveEvent(event)
     
     def mouseReleaseEvent(self, event):
-        if self.edit_mode == self.MODE_ADD and self.drawing:
+        if self.edit_mode == self.MODE_SELECT and self.drawing and self.selection_rect:
+            # Complete box selection
+            self.drawing = False
+            rect = self.selection_rect.rect()
+            self.scene.removeItem(self.selection_rect)
+            self.selection_rect = None
+            
+            # Select all deposits inside the rectangle
+            if rect.width() > 5 and rect.height() > 5:
+                for item in self.deposit_items:
+                    # Check if deposit center is inside selection rect
+                    item_center = item.boundingRect().center() + item.pos()
+                    if rect.contains(item_center):
+                        item.set_selected(True)
+                        if item not in self.selected_items:
+                            self.selected_items.append(item)
+                
+                if self.parent_window and self.selected_items:
+                    self.parent_window._selection_source = 'image'
+        elif self.edit_mode == self.MODE_ADD and self.drawing:
             self.drawing = False
             
             if self.add_shape == self.ADD_FREEFORM:
@@ -613,14 +652,19 @@ class LabelingWindow(QMainWindow):
         edit_layout = QVBoxLayout()
         
         self.mode_group = QButtonGroup()
+        self.radio_pan = QRadioButton("Pan (H)")
+        self.radio_pan.setChecked(True)  # Default to pan mode
+        self.radio_pan.setToolTip("Drag to pan the view")
         self.radio_select = QRadioButton("Select (S)")
-        self.radio_select.setChecked(True)
+        self.radio_select.setToolTip("Click to select, drag to box-select multiple")
         self.radio_add = QRadioButton("Add Deposit (A)")
         
+        self.mode_group.addButton(self.radio_pan, ImageViewer.MODE_PAN)
         self.mode_group.addButton(self.radio_select, ImageViewer.MODE_SELECT)
         self.mode_group.addButton(self.radio_add, ImageViewer.MODE_ADD)
         self.mode_group.buttonClicked.connect(self._on_mode_changed)
         
+        edit_layout.addWidget(self.radio_pan)
         edit_layout.addWidget(self.radio_select)
         edit_layout.addWidget(self.radio_add)
         
@@ -818,9 +862,10 @@ class LabelingWindow(QMainWindow):
         QShortcut(QKeySequence("Ctrl+Z"), self, self._undo)  # Undo
         QShortcut(QKeySequence("D"), self, self._delete_selected)
         QShortcut(QKeySequence("Delete"), self, self._delete_selected)
-        QShortcut(QKeySequence("S"), self, lambda: self._set_mode(0))
-        QShortcut(QKeySequence("A"), self, lambda: self._set_mode(1))
-        # M: merge 실행 (Ctrl+클릭으로 다중 선택 후)
+        QShortcut(QKeySequence("H"), self, lambda: self._set_mode(0))  # Pan (Hand)
+        QShortcut(QKeySequence("S"), self, lambda: self._set_mode(1))  # Select
+        QShortcut(QKeySequence("A"), self, lambda: self._set_mode(2))  # Add
+        # M: execute merge (after multi-select with Ctrl+click)
         QShortcut(QKeySequence("M"), self, self._merge_selected)
         # G: group selected, U: ungroup
         QShortcut(QKeySequence("G"), self, self._group_selected)
@@ -865,14 +910,14 @@ class LabelingWindow(QMainWindow):
         self._mark_unsaved()
     
     def _undo(self):
-        """이전 상태로 복원"""
+        """Restore to previous state."""
         if not self._undo_stack:
             self.statusBar().showMessage("Nothing to undo")
             return
         
         state = self._undo_stack.pop()
         
-        # 현재 뷰어 아이템 제거
+        # Remove current viewer items
         for item in self.viewer.deposit_items:
             self.viewer.scene.removeItem(item)
         self.viewer.deposit_items.clear()
@@ -880,7 +925,7 @@ class LabelingWindow(QMainWindow):
         self.viewer.selected_items.clear()
         self.deposits.clear()
         
-        # 상태 복원
+        # Restore state
         for saved in state:
             d = Deposit(
                 id=saved['id'],
@@ -921,8 +966,10 @@ class LabelingWindow(QMainWindow):
     
     def _set_mode(self, mode):
         if mode == 0:
-            self.radio_select.setChecked(True)
+            self.radio_pan.setChecked(True)
         elif mode == 1:
+            self.radio_select.setChecked(True)
+        elif mode == 2:
             self.radio_add.setChecked(True)
         self._on_mode_changed()
     
@@ -931,7 +978,7 @@ class LabelingWindow(QMainWindow):
         self.viewer.set_mode(mode)
         shape_names = ["Rectangle", "Circle", "Freeform"]
         shape = shape_names[self.viewer.add_shape] if mode == ImageViewer.MODE_ADD else ""
-        modes = {0: "Select", 1: f"Add ({shape})"}
+        modes = {0: "Pan", 1: "Select", 2: f"Add ({shape})"}
         self.statusBar().showMessage(f"Mode: {modes.get(mode, 'Unknown')}")
     
     def _on_shape_changed(self, index: int):
@@ -997,7 +1044,7 @@ class LabelingWindow(QMainWindow):
         if self.image is None:
             return
         
-        self._save_state()  # 추가 전 상태 저장
+        self._save_state()  # Save state before adding
         
         x, y = int(rect.x()), int(rect.y())
         w, h = int(rect.width()), int(rect.height())
@@ -1180,7 +1227,7 @@ class LabelingWindow(QMainWindow):
         has_selection = self.viewer.selected_items or self.viewer.selected_item
         
         if has_selection:
-            self._save_state()  # 삭제 전 상태 저장
+            self._save_state()  # Save state before deleting
         
         if self.viewer.selected_items:
             for item in self.viewer.selected_items[:]:
@@ -1203,7 +1250,7 @@ class LabelingWindow(QMainWindow):
             self.statusBar().showMessage("Select 2+ deposits to merge")
             return
         
-        self._save_state()  # Merge 전 상태 저장
+        self._save_state()  # Save state before merge
         
         all_points = []
         for item in self.viewer.selected_items:
@@ -1253,7 +1300,7 @@ class LabelingWindow(QMainWindow):
             self.statusBar().showMessage("Select 2+ deposits to group")
             return
         
-        self._save_state()  # Group 전 상태 저장
+        self._save_state()  # Save state before grouping
         
         # Assign same group_id to all selected deposits
         group_id = self.next_group_id
@@ -1275,11 +1322,11 @@ class LabelingWindow(QMainWindow):
             [self.viewer.selected_item] if self.viewer.selected_item else []
         )
         
-        # 그룹된 항목이 있는지 확인
+        # Check if there are grouped items
         has_grouped = any(item and item.deposit.group_id is not None for item in items)
         
         if has_grouped:
-            self._save_state()  # Ungroup 전 상태 저장
+            self._save_state()  # Save state before ungrouping
         
         ungrouped_ids = []
         for item in items:
@@ -1324,9 +1371,9 @@ class LabelingWindow(QMainWindow):
         has_selection = self.viewer.selected_items or self.viewer.selected_item
         
         if has_selection:
-            self._save_state()  # 라벨 변경 전 상태 저장
+            self._save_state()  # Save state before label change
         
-        # 다중 선택된 경우 모두 라벨링
+        # Label all if multi-selected
         if self.viewer.selected_items:
             for item in self.viewer.selected_items:
                 item.set_label(label)
@@ -1334,13 +1381,13 @@ class LabelingWindow(QMainWindow):
             self._update_stats()
             return
         
-        # 단일 선택
+        # Single selection
         if self.viewer.selected_item:
             self.viewer.selected_item.set_label(label)
             self._update_table()
             self._update_stats()
             
-            # 테이블에서 선택한 경우에만 다음으로 이동
+            # Move to next only if selected from table
             if self._selection_source == 'table':
                 self._select_next()
     
