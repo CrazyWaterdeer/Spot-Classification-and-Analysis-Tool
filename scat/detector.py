@@ -301,7 +301,7 @@ class DepositDetector:
                 cx, cy = x + bw // 2, y + bh // 2
             
             deposit = Deposit(
-                id=len(deposits),
+                id=len(deposits) + 1,  # Start from 1, not 0
                 contour=cnt,
                 x=x, y=y,
                 width=bw, height=bh,

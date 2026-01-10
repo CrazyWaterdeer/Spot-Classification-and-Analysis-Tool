@@ -13,10 +13,10 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QFileDialog, QGraphicsView, QGraphicsScene, 
     QGraphicsPathItem, QGraphicsRectItem, QToolBar, QSplitter, QGroupBox,
-    QSpinBox, QDoubleSpinBox, QFormLayout, QTableWidget,
+    QSpinBox, QDoubleSpinBox, QFormLayout, QTableWidget, QCheckBox, QComboBox,
     QTableWidgetItem, QHeaderView, QButtonGroup, QRadioButton, QScrollArea
 )
-from PySide6.QtCore import Qt, QRectF, QTimer
+from PySide6.QtCore import Qt, QRectF, QTimer, Signal
 from PySide6.QtGui import (
     QImage, QPixmap, QPainter, QPen, QColor, QBrush, 
     QPainterPath, QAction, QShortcut, QKeySequence, QWheelEvent
@@ -25,6 +25,25 @@ from PySide6.QtGui import (
 from .detector import DepositDetector, Deposit
 from .features import FeatureExtractor
 from .config import config
+
+
+# =============================================================================
+# Custom Table Item for Numeric Sorting
+# =============================================================================
+class NumericTableWidgetItem(QTableWidgetItem):
+    """QTableWidgetItem that sorts numerically instead of alphabetically."""
+    
+    def __init__(self, value, display_format: str = None):
+        if display_format:
+            super().__init__(display_format.format(value))
+        else:
+            super().__init__(str(value))
+        self._value = value
+    
+    def __lt__(self, other):
+        if isinstance(other, NumericTableWidgetItem):
+            return self._value < other._value
+        return super().__lt__(other)
 
 
 # =============================================================================
@@ -121,20 +140,22 @@ class Theme:
             QRadioButton {{
                 color: {cls.TEXT_PRIMARY};
                 spacing: 8px;
-            }}
-            QRadioButton::indicator {{
-                width: 12px;
-                height: 12px;
-                border: 2px solid {cls.BORDER};
-                border-radius: 6px;
+                padding: 6px 12px;
+                border-radius: 4px;
                 background-color: {cls.BG_MEDIUM};
             }}
-            QRadioButton::indicator:checked {{
-                background-color: {cls.PRIMARY};
-                border-color: {cls.PRIMARY};
+            QRadioButton:hover {{
+                border: 1px solid {cls.SECONDARY};
+                background-color: {cls.BG_LIGHT};
             }}
-            QRadioButton::indicator:hover {{
-                border-color: {cls.SECONDARY};
+            QRadioButton:checked {{
+                background-color: {cls.PRIMARY};
+                color: white;
+                font-weight: bold;
+            }}
+            QRadioButton::indicator {{
+                width: 0px;
+                height: 0px;
             }}
             QLabel {{
                 color: {cls.TEXT_PRIMARY};
@@ -239,6 +260,28 @@ class DepositGraphicsItem(QGraphicsPathItem):
         self.selected = selected
         self._update_appearance()
     
+    def paint(self, painter, option, widget=None):
+        """Override to prevent Qt's default selection dotted line and optionally draw ID."""
+        from PySide6.QtWidgets import QStyle
+        from PySide6.QtGui import QFont
+        
+        # Remove the selected state to prevent default selection rectangle
+        option.state &= ~QStyle.State_Selected
+        super().paint(painter, option, widget)
+        
+        # Draw ID number if enabled
+        if hasattr(self, 'show_id') and self.show_id:
+            painter.setFont(QFont("Arial", 8))
+            painter.setPen(QPen(QColor(255, 255, 255)))
+            # Draw at centroid
+            cx, cy = self.deposit.centroid
+            painter.drawText(int(cx * self.scale) - 5, int(cy * self.scale) + 3, str(self.deposit.id))
+    
+    def set_show_id(self, show: bool):
+        """Set whether to display ID number."""
+        self.show_id = show
+        self.update()
+    
     def update_group_visual(self, group_id):
         """Update visual appearance for grouping."""
         self.deposit.group_id = group_id
@@ -249,6 +292,11 @@ class ImageViewer(QGraphicsView):
     MODE_SELECT = 0
     MODE_ADD = 1
     MODE_MERGE = 2
+    
+    # Add shape modes
+    ADD_RECT = 0
+    ADD_CIRCLE = 1
+    ADD_FREEFORM = 2
     
     def __init__(self, parent=None):
         super().__init__()
@@ -265,9 +313,12 @@ class ImageViewer(QGraphicsView):
         self.scale_factor = 1.0
         
         self.edit_mode = self.MODE_SELECT
+        self.add_shape = self.ADD_RECT  # Default add shape
         self.drawing = False
         self.start_point = None
         self.rect_item = None
+        self.freeform_points = []  # For freeform mode
+        self.freeform_path_item = None
     
     def set_mode(self, mode: int):
         self.edit_mode = mode
@@ -353,11 +404,18 @@ class ImageViewer(QGraphicsView):
             super().mousePressEvent(event)
             
         elif self.edit_mode == self.MODE_ADD:
-            self.drawing = True
-            self.start_point = self.mapToScene(event.pos())
-            self.rect_item = QGraphicsRectItem()
-            self.rect_item.setPen(QPen(QColor(0, 0, 255), 2, Qt.DashLine))
-            self.scene.addItem(self.rect_item)
+            if self.add_shape == self.ADD_FREEFORM:
+                # Freeform: click to add point
+                point = self.mapToScene(event.pos())
+                self.freeform_points.append(point)
+                self._update_freeform_preview()
+            else:
+                # Rect or Circle: start drag
+                self.drawing = True
+                self.start_point = self.mapToScene(event.pos())
+                self.rect_item = QGraphicsRectItem()
+                self.rect_item.setPen(QPen(QColor(0, 0, 255), 2, Qt.DashLine))
+                self.scene.addItem(self.rect_item)
         elif self.edit_mode == self.MODE_MERGE:
             item = self.itemAt(event.pos())
             if isinstance(item, DepositGraphicsItem):
@@ -371,8 +429,21 @@ class ImageViewer(QGraphicsView):
     def mouseMoveEvent(self, event):
         if self.edit_mode == self.MODE_ADD and self.drawing:
             current = self.mapToScene(event.pos())
-            rect = QRectF(self.start_point, current).normalized()
-            self.rect_item.setRect(rect)
+            
+            if self.add_shape == self.ADD_CIRCLE:
+                # Circle: center at start_point, radius to current
+                radius = ((current.x() - self.start_point.x())**2 + 
+                         (current.y() - self.start_point.y())**2)**0.5
+                rect = QRectF(
+                    self.start_point.x() - radius,
+                    self.start_point.y() - radius,
+                    radius * 2, radius * 2
+                )
+                self.rect_item.setRect(rect)
+            else:
+                # Rectangle
+                rect = QRectF(self.start_point, current).normalized()
+                self.rect_item.setRect(rect)
         else:
             super().mouseMoveEvent(event)
     
@@ -384,18 +455,79 @@ class ImageViewer(QGraphicsView):
                 self.scene.removeItem(self.rect_item)
                 self.rect_item = None
                 if rect.width() > 5 and rect.height() > 5 and self.parent_window:
-                    self.parent_window._add_deposit_from_rect(rect)
+                    if self.add_shape == self.ADD_CIRCLE:
+                        self.parent_window._add_deposit_from_circle(rect)
+                    else:
+                        self.parent_window._add_deposit_from_rect(rect)
         else:
             super().mouseReleaseEvent(event)
+    
+    def mouseDoubleClickEvent(self, event):
+        """Handle double-click to complete freeform shape."""
+        if self.edit_mode == self.MODE_ADD and self.add_shape == self.ADD_FREEFORM:
+            if len(self.freeform_points) >= 3 and self.parent_window:
+                self.parent_window._add_deposit_from_freeform(self.freeform_points)
+            self._clear_freeform()
+        else:
+            super().mouseDoubleClickEvent(event)
+    
+    def _update_freeform_preview(self):
+        """Update the freeform path preview."""
+        if self.freeform_path_item:
+            self.scene.removeItem(self.freeform_path_item)
+        
+        if len(self.freeform_points) < 2:
+            return
+        
+        path = QPainterPath()
+        path.moveTo(self.freeform_points[0])
+        for point in self.freeform_points[1:]:
+            path.lineTo(point)
+        
+        self.freeform_path_item = self.scene.addPath(
+            path, QPen(QColor(0, 0, 255), 2, Qt.DashLine)
+        )
+    
+    def _clear_freeform(self):
+        """Clear freeform drawing state."""
+        self.freeform_points.clear()
+        if self.freeform_path_item:
+            self.scene.removeItem(self.freeform_path_item)
+            self.freeform_path_item = None
 
 
 class LabelingWindow(QMainWindow):
     MAX_UNDO = 5  # Maximum undo steps
     AUTO_SAVE_INTERVAL = 60000  # 1 minute in milliseconds
     
-    def __init__(self):
+    # Operating modes
+    MODE_LABELING = 0  # New labeling from scratch
+    MODE_EDIT = 1      # Edit existing analysis results
+    
+    # Signal to notify parent when data is saved (for Results tab refresh)
+    data_saved = Signal()
+    
+    def __init__(self, mode: int = 0, edit_data: dict = None):
+        """
+        Initialize LabelingWindow.
+        
+        Args:
+            mode: MODE_LABELING (0) or MODE_EDIT (1)
+            edit_data: Dict with keys for EDIT_MODE:
+                - 'image_path': Path to original image
+                - 'output_dir': Results output directory
+                - 'filename': Original filename
+                - 'deposits_df': DataFrame of deposits
+                - 'contour_data': Dict of contour info
+                - 'next_group_id': Next group ID
+        """
         super().__init__()
-        self.setWindowTitle("SCAT - Labeling Tool")
+        
+        self.mode = mode
+        self.edit_data = edit_data or {}
+        
+        title = "SCAT - Edit Deposits" if mode == self.MODE_EDIT else "SCAT - Labeling Tool"
+        self.setWindowTitle(title)
         self.setMinimumSize(1200, 800)
         
         # Apply dark theme
@@ -410,7 +542,7 @@ class LabelingWindow(QMainWindow):
         # Use sensitive_mode=True to match Analysis tab detection
         self.detector = DepositDetector(sensitive_mode=True)
         self.extractor = FeatureExtractor()
-        self.next_id = 0
+        self.next_id = 1  # Start from 1, not 0
         self.next_group_id = 1  # For grouping deposits
         
         # Undo history
@@ -427,6 +559,10 @@ class LabelingWindow(QMainWindow):
         
         self._setup_ui()
         self._setup_shortcuts()
+        
+        # If EDIT_MODE, load the data
+        if mode == self.MODE_EDIT and edit_data:
+            self._load_edit_data()
     
     def _setup_ui(self):
         central = QWidget()
@@ -472,6 +608,19 @@ class LabelingWindow(QMainWindow):
         
         edit_layout.addWidget(self.radio_select)
         edit_layout.addWidget(self.radio_add)
+        
+        # Add shape selection (under radio_add)
+        shape_layout = QHBoxLayout()
+        shape_layout.setContentsMargins(20, 0, 0, 0)  # Indent
+        shape_label = QLabel("Shape:")
+        shape_label.setFixedWidth(45)
+        self.add_shape_combo = QComboBox()
+        self.add_shape_combo.addItems(["Rectangle", "Circle", "Freeform"])
+        self.add_shape_combo.currentIndexChanged.connect(self._on_shape_changed)
+        shape_layout.addWidget(shape_label)
+        shape_layout.addWidget(self.add_shape_combo)
+        edit_layout.addLayout(shape_layout)
+        
         edit_layout.addWidget(self.radio_merge)
         
         edit_btn_layout = QHBoxLayout()
@@ -502,8 +651,20 @@ class LabelingWindow(QMainWindow):
         edit_group.setLayout(edit_layout)
         right_layout.addWidget(edit_group)
         
-        # Detection settings
-        detect_group = QGroupBox("Detection Settings")
+        # View Options
+        view_group = QGroupBox("View Options")
+        view_layout = QVBoxLayout()
+        
+        self.show_ids_check = QCheckBox("Show ID numbers")
+        self.show_ids_check.setChecked(False)
+        self.show_ids_check.toggled.connect(self._toggle_show_ids)
+        view_layout.addWidget(self.show_ids_check)
+        
+        view_group.setLayout(view_layout)
+        right_layout.addWidget(view_group)
+        
+        # Detection settings (hidden in EDIT_MODE)
+        self.detect_group = QGroupBox("Detection Settings")
         detect_layout = QFormLayout()
         
         self.min_area_spin = NoScrollSpinBox()
@@ -525,8 +686,12 @@ class LabelingWindow(QMainWindow):
         detect_btn = QPushButton("Re-detect")
         detect_btn.clicked.connect(self._detect_deposits)
         detect_layout.addRow(detect_btn)
-        detect_group.setLayout(detect_layout)
-        right_layout.addWidget(detect_group)
+        self.detect_group.setLayout(detect_layout)
+        right_layout.addWidget(self.detect_group)
+        
+        # Hide detection settings in EDIT_MODE
+        if self.mode == self.MODE_EDIT:
+            self.detect_group.hide()
         
         # Labeling
         label_group = QGroupBox("Labeling (1=Normal, 2=ROD, 3=Artifact)")
@@ -578,12 +743,15 @@ class LabelingWindow(QMainWindow):
         self.deposit_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.deposit_table.setMinimumHeight(280)  # ~10 rows visible
         
-        # Table cleanup: disable editing, hide row numbers, enable sorting
+        # Table cleanup: disable editing, hide row numbers, enable sorting, row selection
         self.deposit_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.deposit_table.verticalHeader().setVisible(False)
         self.deposit_table.setSortingEnabled(True)
+        self.deposit_table.setSelectionBehavior(QTableWidget.SelectRows)  # Select entire row
+        self.deposit_table.setSelectionMode(QTableWidget.SingleSelection)
         
         self.deposit_table.itemSelectionChanged.connect(self._on_table_select)
+        self.deposit_table.doubleClicked.connect(self._on_table_double_click)
         right_layout.addWidget(self.deposit_table)
         
         right_layout.addStretch()
@@ -592,23 +760,37 @@ class LabelingWindow(QMainWindow):
         toolbar = QToolBar()
         self.addToolBar(toolbar)
         
-        open_action = QAction("Open Image", self)
-        open_action.triggered.connect(self._open_image)
-        toolbar.addAction(open_action)
+        if self.mode == self.MODE_LABELING:
+            # Labeling mode: Open Image, Save Labels, Load Labels, Export
+            open_action = QAction("Open Image", self)
+            open_action.triggered.connect(self._open_image)
+            toolbar.addAction(open_action)
+            
+            save_action = QAction("Save Labels", self)
+            save_action.triggered.connect(self._save_labels)
+            toolbar.addAction(save_action)
+            
+            load_action = QAction("Load Labels", self)
+            load_action.triggered.connect(self._load_labels)
+            toolbar.addAction(load_action)
+            
+            export_action = QAction("Export Training Data", self)
+            export_action.triggered.connect(self._export_training_data)
+            toolbar.addAction(export_action)
+            
+            self.statusBar().showMessage("S: Select, A: Add, Ctrl+Click: Multi-select, M: Merge, D: Delete")
+        else:
+            # Edit mode: Save Changes only
+            save_action = QAction("Save Changes", self)
+            save_action.triggered.connect(self._save_edit_changes)
+            toolbar.addAction(save_action)
+            
+            discard_action = QAction("Discard & Close", self)
+            discard_action.triggered.connect(self._discard_and_close)
+            toolbar.addAction(discard_action)
+            
+            self.statusBar().showMessage("Edit mode: 1/2/3 to label, D to delete, M to merge, G to group")
         
-        save_action = QAction("Save Labels", self)
-        save_action.triggered.connect(self._save_labels)
-        toolbar.addAction(save_action)
-        
-        load_action = QAction("Load Labels", self)
-        load_action.triggered.connect(self._load_labels)
-        toolbar.addAction(load_action)
-        
-        export_action = QAction("Export Training Data", self)
-        export_action.triggered.connect(self._export_training_data)
-        toolbar.addAction(export_action)
-        
-        self.statusBar().showMessage("S: Select, A: Add, Ctrl+Click: Multi-select, M: Merge, D: Delete")
         splitter.setSizes([800, 400])
     
     def _setup_shortcuts(self):
@@ -712,11 +894,11 @@ class LabelingWindow(QMainWindow):
             self.deposits.append(d)
             self.viewer.add_deposit(d)
         
-        # next_id 업데이트
+        # Update next_id
         if self.deposits:
             self.next_id = max(d.id for d in self.deposits) + 1
         else:
-            self.next_id = 0
+            self.next_id = 1  # Start from 1, not 0
         
         self._update_table()
         self._update_stats()
@@ -734,8 +916,17 @@ class LabelingWindow(QMainWindow):
     def _on_mode_changed(self):
         mode = self.mode_group.checkedId()
         self.viewer.set_mode(mode)
-        modes = {0: "Select", 1: "Add (drag rectangle)", 2: "Merge (click deposits)"}
+        shape_names = ["Rectangle", "Circle", "Freeform"]
+        shape = shape_names[self.viewer.add_shape] if mode == ImageViewer.MODE_ADD else ""
+        modes = {0: "Select", 1: f"Add ({shape})", 2: "Merge (click deposits)"}
         self.statusBar().showMessage(f"Mode: {modes.get(mode, 'Unknown')}")
+    
+    def _on_shape_changed(self, index: int):
+        """Change add shape mode."""
+        self.viewer.add_shape = index
+        self.viewer._clear_freeform()  # Clear any pending freeform
+        shape_names = ["Rectangle - drag to draw", "Circle - drag center to edge", "Freeform - click points, double-click to finish"]
+        self.statusBar().showMessage(f"Add shape: {shape_names[index]}")
     
     def _open_image(self):
         # Use last image directory
@@ -819,6 +1010,134 @@ class LabelingWindow(QMainWindow):
         M = cv2.moments(contour)
         cx = int(M["m10"] / M["m00"]) if M["m00"] > 0 else x + w // 2
         cy = int(M["m01"] / M["m00"]) if M["m00"] > 0 else y + h // 2
+        
+        deposit = Deposit(
+            id=self.next_id, contour=contour,
+            x=bx, y=by, width=bw, height=bh,
+            area=area, perimeter=perimeter,
+            circularity=circularity, aspect_ratio=aspect_ratio,
+            centroid=(cx, cy)
+        )
+        self.next_id += 1
+        
+        self.deposits.append(deposit)
+        self.extractor.extract_features(self.image, [deposit])
+        self.viewer.add_deposit(deposit)
+        
+        self._update_table()
+        self._update_stats()
+        self.statusBar().showMessage(f"Added deposit {deposit.id}")
+    
+    def _add_deposit_from_circle(self, rect: QRectF):
+        """Add deposit from circle (rect is bounding box of circle)."""
+        if self.image is None:
+            return
+        
+        self._save_state()
+        
+        # Circle parameters from bounding rect
+        cx = int(rect.center().x())
+        cy = int(rect.center().y())
+        radius = int(rect.width() / 2)
+        
+        h_img, w_img = self.image.shape[:2]
+        
+        # Create circular contour
+        num_points = 32
+        angles = np.linspace(0, 2 * np.pi, num_points, endpoint=False)
+        contour = np.array([
+            [int(cx + radius * np.cos(a)), int(cy + radius * np.sin(a))]
+            for a in angles
+        ])
+        
+        # Clip to image bounds
+        x1, y1 = max(0, cx - radius), max(0, cy - radius)
+        x2, y2 = min(w_img, cx + radius), min(h_img, cy + radius)
+        
+        roi = self.image[y1:y2, x1:x2]
+        if roi.size > 0:
+            gray = cv2.cvtColor(roi, cv2.COLOR_RGB2GRAY)
+            _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+            contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            if contours:
+                largest = max(contours, key=cv2.contourArea)
+                contour = largest + np.array([x1, y1])
+        
+        area = cv2.contourArea(contour)
+        perimeter = cv2.arcLength(contour, True)
+        circularity = 4 * np.pi * area / (perimeter ** 2) if perimeter > 0 else 0
+        
+        bx, by, bw, bh = cv2.boundingRect(contour)
+        aspect_ratio = max(bw, bh) / min(bw, bh) if min(bw, bh) > 0 else 1
+        
+        M = cv2.moments(contour)
+        cx_m = int(M["m10"] / M["m00"]) if M["m00"] > 0 else cx
+        cy_m = int(M["m01"] / M["m00"]) if M["m00"] > 0 else cy
+        
+        deposit = Deposit(
+            id=self.next_id, contour=contour,
+            x=bx, y=by, width=bw, height=bh,
+            area=area, perimeter=perimeter,
+            circularity=circularity, aspect_ratio=aspect_ratio,
+            centroid=(cx_m, cy_m)
+        )
+        self.next_id += 1
+        
+        self.deposits.append(deposit)
+        self.extractor.extract_features(self.image, [deposit])
+        self.viewer.add_deposit(deposit)
+        
+        self._update_table()
+        self._update_stats()
+        self.statusBar().showMessage(f"Added deposit {deposit.id}")
+    
+    def _add_deposit_from_freeform(self, points: list):
+        """Add deposit from freeform polygon."""
+        if self.image is None or len(points) < 3:
+            return
+        
+        self._save_state()
+        
+        h_img, w_img = self.image.shape[:2]
+        
+        # Convert QPointF to numpy array
+        contour = np.array([[int(p.x()), int(p.y())] for p in points])
+        
+        # Get bounding rect
+        bx, by, bw, bh = cv2.boundingRect(contour)
+        
+        # Clip to image bounds
+        x1, y1 = max(0, bx), max(0, by)
+        x2, y2 = min(w_img, bx + bw), min(h_img, by + bh)
+        
+        roi = self.image[y1:y2, x1:x2]
+        if roi.size > 0:
+            gray = cv2.cvtColor(roi, cv2.COLOR_RGB2GRAY)
+            _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+            
+            # Create mask from freeform polygon
+            mask = np.zeros_like(thresh)
+            local_contour = contour - np.array([x1, y1])
+            cv2.fillPoly(mask, [local_contour], 255)
+            
+            # Apply mask to threshold
+            thresh = cv2.bitwise_and(thresh, mask)
+            
+            contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            if contours:
+                largest = max(contours, key=cv2.contourArea)
+                contour = largest + np.array([x1, y1])
+        
+        area = cv2.contourArea(contour)
+        perimeter = cv2.arcLength(contour, True)
+        circularity = 4 * np.pi * area / (perimeter ** 2) if perimeter > 0 else 0
+        
+        bx, by, bw, bh = cv2.boundingRect(contour)
+        aspect_ratio = max(bw, bh) / min(bw, bh) if min(bw, bh) > 0 else 1
+        
+        M = cv2.moments(contour)
+        cx = int(M["m10"] / M["m00"]) if M["m00"] > 0 else bx + bw // 2
+        cy = int(M["m01"] / M["m00"]) if M["m00"] > 0 else by + bh // 2
         
         deposit = Deposit(
             id=self.next_id, contour=contour,
@@ -958,13 +1277,21 @@ class LabelingWindow(QMainWindow):
 
     
     def _update_table(self):
+        self.deposit_table.setSortingEnabled(False)  # Disable during update
         self.deposit_table.setRowCount(len(self.deposits))
         for i, d in enumerate(self.deposits):
-            self.deposit_table.setItem(i, 0, QTableWidgetItem(str(d.id)))
-            self.deposit_table.setItem(i, 1, QTableWidgetItem(f"{d.area:.0f}"))
-            self.deposit_table.setItem(i, 2, QTableWidgetItem(f"{d.circularity:.3f}"))
-            self.deposit_table.setItem(i, 3, QTableWidgetItem(f"{d.mean_hue:.1f}"))
+            # Use NumericTableWidgetItem for proper numeric sorting
+            self.deposit_table.setItem(i, 0, NumericTableWidgetItem(d.id))
+            self.deposit_table.setItem(i, 1, NumericTableWidgetItem(d.area, "{:.0f}"))
+            self.deposit_table.setItem(i, 2, NumericTableWidgetItem(d.circularity, "{:.3f}"))
+            self.deposit_table.setItem(i, 3, NumericTableWidgetItem(d.mean_hue, "{:.1f}"))
             self.deposit_table.setItem(i, 4, QTableWidgetItem(d.label))
+        self.deposit_table.setSortingEnabled(True)  # Re-enable sorting
+    
+    def _toggle_show_ids(self, show: bool):
+        """Toggle ID number display on deposits."""
+        for item in self.viewer.deposit_items:
+            item.set_show_id(show)
     
     def _update_stats(self):
         labels = [d.label for d in self.deposits]
@@ -1048,15 +1375,36 @@ class LabelingWindow(QMainWindow):
     def _on_table_select(self):
         rows = self.deposit_table.selectionModel().selectedRows()
         if rows:
-            idx = rows[0].row()
-            if 0 <= idx < len(self.viewer.deposit_items):
-                if self.viewer.selected_item:
-                    self.viewer.selected_item.set_selected(False)
-                self.viewer.selected_item = self.viewer.deposit_items[idx]
-                self.viewer.selected_item.set_selected(True)
-                self.viewer.centerOn(self.viewer.selected_item)
-                # 테이블에서 선택했음을 표시
-                self._selection_source = 'table'
+            row_idx = rows[0].row()
+            # Get ID from the table (column 0) - sorted may differ from list order
+            id_item = self.deposit_table.item(row_idx, 0)
+            if id_item:
+                deposit_id = int(id_item.text())
+                # Find the corresponding deposit item by ID
+                for item in self.viewer.deposit_items:
+                    if item.deposit.id == deposit_id:
+                        if self.viewer.selected_item:
+                            self.viewer.selected_item.set_selected(False)
+                        self.viewer.selected_item = item
+                        self.viewer.selected_item.set_selected(True)
+                        # Mark selection source
+                        self._selection_source = 'table'
+                        break
+    
+    def _on_table_double_click(self, index):
+        """Navigate to deposit location on double-click."""
+        row_idx = index.row()
+        id_item = self.deposit_table.item(row_idx, 0)
+        if id_item:
+            deposit_id = int(id_item.text())
+            # Find the corresponding deposit item by ID
+            for item in self.viewer.deposit_items:
+                if item.deposit.id == deposit_id:
+                    # Center view on the deposit
+                    self.viewer.centerOn(item)
+                    # Optionally zoom in a bit
+                    self.viewer.scale(1.5, 1.5)
+                    break
     
     def _save_labels(self):
         if not self.current_file:
@@ -1218,6 +1566,210 @@ class LabelingWindow(QMainWindow):
                 Image.fromarray(patch).save(folder / d.label / filename)
                 count += 1
         self.statusBar().showMessage(f"Exported {count} patches to {folder}")
+    
+    # =========================================================================
+    # EDIT_MODE specific methods
+    # =========================================================================
+    
+    def _load_edit_data(self):
+        """Load data from edit_data dict (for EDIT_MODE)."""
+        from PIL import Image
+        import pandas as pd
+        
+        image_path = self.edit_data.get('image_path')
+        if image_path and Path(image_path).exists():
+            self.image = np.array(Image.open(image_path))
+            self.current_file = Path(image_path)
+            self.viewer.load_image(self.image)
+        
+        # Load deposits from DataFrame
+        deposits_df = self.edit_data.get('deposits_df')
+        contour_data = self.edit_data.get('contour_data', {})
+        self.next_group_id = self.edit_data.get('next_group_id', 1)
+        
+        if deposits_df is not None:
+            self.deposits = []
+            for idx, row in deposits_df.iterrows():
+                dep_id = int(row.get('id', idx))
+                info = contour_data.get(dep_id, {})
+                
+                # Get contour
+                contour = info.get('contour', []) if isinstance(info, dict) else info
+                if not contour:
+                    # Create approximate contour from bounding box
+                    x, y = int(row.get('x', 0)), int(row.get('y', 0))
+                    w, h = int(row.get('width', 20)), int(row.get('height', 20))
+                    contour = [[x-w//2, y-h//2], [x+w//2, y-h//2], 
+                              [x+w//2, y+h//2], [x-w//2, y+h//2]]
+                
+                contour_np = np.array(contour)
+                
+                # Create Deposit object
+                area = float(row.get('area', row.get('area_px', 0)))
+                perimeter = cv2.arcLength(contour_np, True) if len(contour_np) > 2 else 0
+                circularity = float(row.get('circularity', 0))
+                
+                x, y, bw, bh = cv2.boundingRect(contour_np) if len(contour_np) > 2 else (0, 0, 20, 20)
+                
+                deposit = Deposit(
+                    id=dep_id,
+                    contour=contour_np,
+                    x=x, y=y,
+                    width=bw, height=bh,
+                    area=area,
+                    perimeter=perimeter,
+                    circularity=circularity,
+                    aspect_ratio=max(bw, bh) / min(bw, bh) if min(bw, bh) > 0 else 1,
+                    centroid=(int(row.get('x', x + bw//2)), int(row.get('y', y + bh//2))),
+                    label=row.get('label', 'unknown'),
+                    confidence=float(row.get('confidence', 1.0)),
+                    merged=info.get('merged', False) if isinstance(info, dict) else False,
+                    group_id=info.get('group_id', None) if isinstance(info, dict) else None
+                )
+                
+                # Add color features if available
+                deposit.mean_hue = float(row.get('mean_hue', 0))
+                deposit.mean_saturation = float(row.get('mean_saturation', 0))
+                deposit.mean_lightness = float(row.get('mean_lightness', 0))
+                
+                self.deposits.append(deposit)
+            
+            # Update next_id
+            if self.deposits:
+                self.next_id = max(d.id for d in self.deposits) + 1
+            
+            # Add to viewer
+            for d in self.deposits:
+                item = DepositGraphicsItem(d)
+                self.viewer.scene.addItem(item)
+                self.viewer.deposit_items.append(item)
+            
+            self._update_table()
+            self._update_stats()
+    
+    def _save_edit_changes(self):
+        """Save changes in EDIT_MODE (updates CSV + JSON + film_summary)."""
+        if not self._has_unsaved_changes:
+            self.close()
+            return
+        
+        import pandas as pd
+        
+        output_dir = Path(self.edit_data.get('output_dir', ''))
+        filename = self.edit_data.get('filename', '')
+        stem = Path(filename).stem
+        
+        if not output_dir.exists():
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.critical(self, "Error", f"Output directory not found: {output_dir}")
+            return
+        
+        try:
+            # 1. Update individual CSV
+            deposits_dir = output_dir / 'deposits'
+            if deposits_dir.exists():
+                csv_path = deposits_dir / f"{stem}_deposits.csv"
+                
+                # Create DataFrame from deposits
+                rows = []
+                for d in self.deposits:
+                    rows.append({
+                        'id': d.id,
+                        'filename': filename,
+                        'x': d.centroid[0],
+                        'y': d.centroid[1],
+                        'width': d.width,
+                        'height': d.height,
+                        'area_px': d.area,
+                        'circularity': d.circularity,
+                        'aspect_ratio': d.aspect_ratio,
+                        'mean_hue': d.mean_hue,
+                        'mean_saturation': d.mean_saturation,
+                        'mean_lightness': d.mean_lightness,
+                        'label': d.label,
+                        'confidence': d.confidence
+                    })
+                df = pd.DataFrame(rows)
+                df.to_csv(csv_path, index=False)
+                
+                # 2. Update JSON (unified format)
+                json_path = deposits_dir / f"{stem}.labels.json"
+                deposits_data = []
+                for d in self.deposits:
+                    deposits_data.append({
+                        'id': d.id,
+                        'contour': d.contour.tolist(),
+                        'x': d.centroid[0],
+                        'y': d.centroid[1],
+                        'width': d.width,
+                        'height': d.height,
+                        'area': d.area,
+                        'circularity': d.circularity,
+                        'label': d.label,
+                        'confidence': d.confidence,
+                        'merged': d.merged,
+                        'group_id': d.group_id
+                    })
+                
+                with open(json_path, 'w') as f:
+                    json.dump({
+                        'image_file': filename,
+                        'next_group_id': self.next_group_id,
+                        'deposits': deposits_data
+                    }, f, indent=2)
+            
+            # 3. Update all_deposits.csv
+            all_deposits_path = output_dir / 'all_deposits.csv'
+            if all_deposits_path.exists():
+                all_df = pd.read_csv(all_deposits_path)
+                all_df = all_df[all_df['filename'] != filename]
+                all_df = pd.concat([all_df, df], ignore_index=True)
+                all_df.to_csv(all_deposits_path, index=False)
+            
+            # 4. Update film_summary.csv
+            summary_path = output_dir / 'film_summary.csv'
+            if summary_path.exists():
+                summary_df = pd.read_csv(summary_path)
+                
+                labels = [d.label for d in self.deposits]
+                n_normal = labels.count('normal')
+                n_rod = labels.count('rod')
+                n_artifact = labels.count('artifact')
+                n_total = n_normal + n_rod
+                rod_fraction = n_rod / n_total if n_total > 0 else 0
+                
+                mask = summary_df['filename'] == filename
+                if mask.any():
+                    summary_df.loc[mask, 'n_normal'] = n_normal
+                    summary_df.loc[mask, 'n_rod'] = n_rod
+                    summary_df.loc[mask, 'n_artifact'] = n_artifact
+                    summary_df.loc[mask, 'n_total'] = n_total
+                    summary_df.loc[mask, 'rod_fraction'] = rod_fraction
+                    summary_df.to_csv(summary_path, index=False)
+            
+            self._has_unsaved_changes = False
+            self.data_saved.emit()  # Notify parent to refresh
+            self.statusBar().showMessage("Changes saved successfully!")
+            self.close()
+            
+        except Exception as e:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.critical(self, "Error", f"Failed to save: {e}")
+    
+    def _discard_and_close(self):
+        """Discard changes and close (EDIT_MODE)."""
+        if self._has_unsaved_changes:
+            from PySide6.QtWidgets import QMessageBox
+            reply = QMessageBox.question(
+                self, "Discard Changes?",
+                "You have unsaved changes. Discard them?",
+                QMessageBox.Yes | QMessageBox.No
+            )
+            if reply == QMessageBox.No:
+                return
+        
+        self._has_unsaved_changes = False
+        self.close()
 
 
 def run_labeling_gui():

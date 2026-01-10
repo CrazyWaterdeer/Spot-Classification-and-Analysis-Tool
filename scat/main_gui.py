@@ -738,6 +738,22 @@ class ImageViewerDialog(QDialog):
         self.view.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
 
 
+class NumericTableWidgetItem(QTableWidgetItem):
+    """QTableWidgetItem that sorts numerically instead of alphabetically."""
+    
+    def __init__(self, value, display_format: str = None):
+        if display_format:
+            super().__init__(display_format.format(value))
+        else:
+            super().__init__(str(value))
+        self._value = value
+    
+    def __lt__(self, other):
+        if isinstance(other, NumericTableWidgetItem):
+            return self._value < other._value
+        return super().__lt__(other)
+
+
 class DepositItemWidget(QGraphicsPathItem):
     """Graphics item for deposit in detail view."""
     
@@ -845,6 +861,12 @@ class DepositItemWidget(QGraphicsPathItem):
             pen = QPen(color.darker(150), line_width)
         
         self.setPen(pen)
+    
+    def paint(self, painter, option, widget=None):
+        """Override to prevent Qt's default selection dotted line."""
+        from PySide6.QtWidgets import QStyle
+        option.state &= ~QStyle.State_Selected
+        super().paint(painter, option, widget)
 
 
 class DetailImageViewer(QGraphicsView):
@@ -1103,15 +1125,17 @@ class ImageDetailDialog(QDialog):
         self.deposit_table.setHorizontalHeaderLabels(["ID", "Area", "Circ", "Label"])
         self.deposit_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         
-        # Make table read-only
+        # Table settings: read-only, hide row numbers, row selection, sorting
         self.deposit_table.setEditTriggers(QTableWidget.NoEditTriggers)
-        # Hide row numbers
         self.deposit_table.verticalHeader().setVisible(False)
-        # Fixed row height
         self.deposit_table.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
         self.deposit_table.verticalHeader().setDefaultSectionSize(25)
+        self.deposit_table.setSortingEnabled(True)
+        self.deposit_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.deposit_table.setSelectionMode(QTableWidget.SingleSelection)
         
         self.deposit_table.itemSelectionChanged.connect(self._on_table_select)
+        self.deposit_table.doubleClicked.connect(self._on_table_double_click)
         table_layout.addWidget(self.deposit_table)
         
         table_group.setLayout(table_layout)
@@ -1292,15 +1316,21 @@ class ImageDetailDialog(QDialog):
         self._update_stats()
     
     def _update_table(self):
+        self.deposit_table.setSortingEnabled(False)  # Disable during update
         self.deposit_table.setRowCount(len(self.file_deposits))
         
         for i, (_, row) in enumerate(self.file_deposits.iterrows()):
-            self.deposit_table.setItem(i, 0, QTableWidgetItem(str(row.get('id', i))))
-            # Use area_px (CSV column name)
+            # Use NumericTableWidgetItem for proper numeric sorting
+            dep_id = row.get('id', i)
             area = row.get('area_px', row.get('area', 0))
-            self.deposit_table.setItem(i, 1, QTableWidgetItem(f"{area:.0f}"))
-            self.deposit_table.setItem(i, 2, QTableWidgetItem(f"{row.get('circularity', 0):.3f}"))
+            circularity = row.get('circularity', 0)
+            
+            self.deposit_table.setItem(i, 0, NumericTableWidgetItem(dep_id))
+            self.deposit_table.setItem(i, 1, NumericTableWidgetItem(area, "{:.0f}"))
+            self.deposit_table.setItem(i, 2, NumericTableWidgetItem(circularity, "{:.3f}"))
             self.deposit_table.setItem(i, 3, QTableWidgetItem(row.get('label', 'unknown')))
+        
+        self.deposit_table.setSortingEnabled(True)
     
     def _update_stats(self):
         labels = self.file_deposits['label'].tolist()
@@ -1316,15 +1346,34 @@ class ImageDetailDialog(QDialog):
     def _on_table_select(self):
         rows = self.deposit_table.selectionModel().selectedRows()
         if rows:
-            idx = rows[0].row()
-            # Select in viewer and center on it
-            for i, item in enumerate(self.viewer.deposit_items):
-                is_selected = (i == idx)
-                item.set_selected(is_selected)
-                if is_selected:
-                    self.viewer.selected_item = item
-                    # Center and zoom to deposit
+            row_idx = rows[0].row()
+            # Get ID from the table (column 0) - sorted may differ from list order
+            id_item = self.deposit_table.item(row_idx, 0)
+            if id_item:
+                deposit_id = int(id_item.text())
+                # Find the corresponding deposit item by ID
+                for item in self.viewer.deposit_items:
+                    item_id = item.deposit_data.get('id', -1)
+                    is_selected = (item_id == deposit_id)
+                    item.set_selected(is_selected)
+                    if is_selected:
+                        self.viewer.selected_item = item
+    
+    def _on_table_double_click(self, index):
+        """Navigate to deposit location on double-click."""
+        row_idx = index.row()
+        id_item = self.deposit_table.item(row_idx, 0)
+        if id_item:
+            deposit_id = int(id_item.text())
+            # Find the corresponding deposit item by ID
+            for item in self.viewer.deposit_items:
+                item_id = item.deposit_data.get('id', -1)
+                if item_id == deposit_id:
+                    # Center view on the deposit
                     self.viewer.centerOn(item)
+                    # Optionally zoom in a bit
+                    self.viewer.scale(1.5, 1.5)
+                    break
     
     def _set_mode(self, mode: int):
         """Switch between Select and Add mode."""
@@ -2172,8 +2221,8 @@ class AnalysisTab(QWidget):
         
         self.create_metadata_btn = QPushButton("Create")
         self.create_metadata_btn.setToolTip("Create group metadata by organizing files")
-        self.create_metadata_btn.setMinimumWidth(70)
-        self.create_metadata_btn.setMaximumWidth(70)
+        self.create_metadata_btn.setMinimumWidth(80)
+        self.create_metadata_btn.setMaximumWidth(80)
         self.create_metadata_btn.clicked.connect(self._open_group_editor)
         metadata_row.addWidget(self.create_metadata_btn)
         
@@ -2201,7 +2250,8 @@ class AnalysisTab(QWidget):
         self.group_by = QLineEdit()
         self.group_by.setPlaceholderText("e.g., condition")
         self.group_by.setText(config.get("analysis.group_by", ""))
-        options_layout.addRow("Group by", self.group_by)
+        self.group_by.setToolTip("Column name in Groups CSV for statistical comparison (t-test, ANOVA)")
+        options_layout.addRow("Compare by", self.group_by)
         
         self.annotate = QCheckBox("Generate annotated images")
         self.annotate.setChecked(config.get("analysis.annotate", True))
@@ -2222,6 +2272,11 @@ class AnalysisTab(QWidget):
         self.report = QCheckBox("Generate HTML report")
         self.report.setChecked(config.get("analysis.report", True))
         options_layout.addRow(self.report)
+        
+        self.save_json = QCheckBox("Save for retraining (JSON)")
+        self.save_json.setChecked(config.get("analysis.save_json", True))
+        self.save_json.setToolTip("Save contour data for model retraining. Disable to reduce file size.")
+        options_layout.addRow(self.save_json)
         
         options_group.setLayout(options_layout)
         layout.addWidget(options_group)
@@ -2283,6 +2338,7 @@ class AnalysisTab(QWidget):
         config.set("analysis.spatial", self.spatial.isChecked())
         config.set("analysis.stats", self.stats.isChecked())
         config.set("analysis.report", self.report.isChecked())
+        config.set("analysis.save_json", self.save_json.isChecked())
         config.set("detection.min_area", self.min_area.value())
         config.set("detection.max_area", self.max_area.value())
         config.set("detection.threshold", self.threshold.value())
@@ -2415,7 +2471,7 @@ class AnalysisTab(QWidget):
         
         reporter = ReportGenerator(output_path)
         group_by = self.group_by.text().split(',') if self.group_by.text() else None
-        reports = reporter.save_all(results, metadata, group_by)
+        reports = reporter.save_all(results, metadata, group_by, save_json=self.save_json.isChecked())
         
         if self.annotate.isChecked():
             annotated_dir = output_path / 'annotated'
@@ -2826,23 +2882,81 @@ class ResultsTab(QWidget):
         
         row = index.row()
         filename = self.summary_table.item(row, 0).text()
-        output_dir = self.results['output_dir']
+        output_dir = Path(self.results['output_dir'])
         
-        # Open detail dialog with editing capability
+        # Open LabelingWindow in EDIT_MODE
         if 'deposit_data' in self.results and self.results['deposit_data'] is not None:
-            dialog = ImageDetailDialog(
-                filename=filename,
-                output_dir=output_dir,
-                film_summary=self.results['film_summary'],
-                deposit_data=self.results['deposit_data'],
-                parent=self
+            # Find original image
+            image_path = None
+            stem = Path(filename).stem
+            
+            # Try input_dir from config
+            input_dir = config.get("last_input_dir", "")
+            if input_dir:
+                for ext in ['.tif', '.tiff', '.png', '.jpg', '.jpeg', '.TIF', '.TIFF']:
+                    candidate = Path(input_dir) / f"{stem}{ext}"
+                    if candidate.exists():
+                        image_path = str(candidate)
+                        break
+            
+            # Fallback to annotated image
+            if not image_path:
+                annotated_path = output_dir / 'annotated' / f"{stem}_annotated.png"
+                if annotated_path.exists():
+                    image_path = str(annotated_path)
+            
+            if not image_path:
+                QMessageBox.warning(self, "Not Found", f"Original image not found for {filename}")
+                return
+            
+            # Get deposits for this file
+            deposits_df = self.results['deposit_data']
+            file_deposits = deposits_df[deposits_df['filename'] == filename].copy()
+            
+            # Load contour data from JSON
+            contour_data = {}
+            next_group_id = 1
+            json_path = output_dir / 'deposits' / f"{stem}.labels.json"
+            if not json_path.exists():
+                json_path = output_dir / 'deposits' / f"{stem}_deposits.json"
+            
+            if json_path.exists():
+                import json
+                try:
+                    with open(json_path, 'r') as f:
+                        data = json.load(f)
+                        next_group_id = data.get('next_group_id', 1)
+                        for dep in data.get('deposits', []):
+                            dep_id = dep.get('id', len(contour_data))
+                            contour_data[dep_id] = {
+                                'contour': dep.get('contour', []),
+                                'merged': dep.get('merged', False),
+                                'group_id': dep.get('group_id', None)
+                            }
+                except Exception:
+                    pass
+            
+            # Open LabelingWindow in EDIT_MODE
+            from .labeling_gui import LabelingWindow
+            
+            edit_data = {
+                'image_path': image_path,
+                'output_dir': str(output_dir),
+                'filename': filename,
+                'deposits_df': file_deposits,
+                'contour_data': contour_data,
+                'next_group_id': next_group_id
+            }
+            
+            self._edit_window = LabelingWindow(
+                mode=LabelingWindow.MODE_EDIT,
+                edit_data=edit_data
             )
-            if dialog.exec():
-                # Reload results if modified
-                self._reload_results()
+            self._edit_window.data_saved.connect(self._reload_results)
+            self._edit_window.show()
         else:
             # Fallback to simple viewer
-            annotated_path = Path(output_dir) / 'annotated' / f"{Path(filename).stem}_annotated.png"
+            annotated_path = output_dir / 'annotated' / f"{Path(filename).stem}_annotated.png"
             if annotated_path.exists():
                 dialog = ImageViewerDialog(str(annotated_path), filename, self)
                 dialog.exec()

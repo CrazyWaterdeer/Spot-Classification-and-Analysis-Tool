@@ -211,7 +211,7 @@ class ReportGenerator:
             df = df.merge(metadata, on='filename', how='left')
         return df
     
-    def save_individual_deposits(self, results: List[AnalysisResult], metadata: Optional[pd.DataFrame] = None):
+    def save_individual_deposits(self, results: List[AnalysisResult], metadata: Optional[pd.DataFrame] = None, save_json: bool = True):
         """Save individual CSV file for each image."""
         for result in results:
             df = result.to_dataframe()
@@ -232,8 +232,9 @@ class ReportGenerator:
             filepath = self.deposits_dir / f'{image_stem}_deposits.csv'
             df.to_csv(filepath, index=False)
             
-            # Also save contour data as JSON for editing
-            self._save_contour_json(result, image_stem)
+            # Optionally save contour data as JSON for retraining
+            if save_json:
+                self._save_contour_json(result, image_stem)
     
     def _save_contour_json(self, result: AnalysisResult, image_stem: str):
         """Save deposit contours as JSON (unified format with labeling)."""
@@ -271,7 +272,8 @@ class ReportGenerator:
         results: List[AnalysisResult], 
         metadata: Optional[pd.DataFrame] = None, 
         group_by: Optional[List[str]] = None,
-        save_individual: bool = True
+        save_individual: bool = True,
+        save_json: bool = True
     ) -> Dict:
         """
         Save all reports.
@@ -281,6 +283,7 @@ class ReportGenerator:
             metadata: Optional metadata DataFrame
             group_by: Columns for condition grouping
             save_individual: Whether to save individual deposit files per image
+            save_json: Whether to save JSON files for retraining
         """
         # Film summary
         film_summary = self.generate_film_summary(results, metadata)
@@ -293,7 +296,7 @@ class ReportGenerator:
         
         # Individual deposit files per image
         if save_individual:
-            self.save_individual_deposits(results, metadata)
+            self.save_individual_deposits(results, metadata, save_json=save_json)
         
         # Combined deposit data (optional, for convenience)
         deposit_data = self.generate_deposit_data(results, metadata)
