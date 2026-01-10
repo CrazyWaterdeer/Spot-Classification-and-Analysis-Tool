@@ -19,7 +19,8 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QRectF, QTimer, Signal
 from PySide6.QtGui import (
     QImage, QPixmap, QPainter, QPen, QColor, QBrush, 
-    QPainterPath, QAction, QShortcut, QKeySequence, QWheelEvent
+    QPainterPath, QAction, QShortcut, QKeySequence, QWheelEvent,
+    QFont, QFontDatabase
 )
 
 from .detector import DepositDetector, Deposit
@@ -1790,8 +1791,29 @@ class LabelingWindow(QMainWindow):
         self.close()
 
 
+def _load_custom_fonts():
+    """Load custom fonts bundled with the application."""
+    fonts_dir = Path(__file__).parent / "resources" / "fonts"
+    
+    if fonts_dir.exists():
+        for font_file in fonts_dir.glob("*.ttf"):
+            font_id = QFontDatabase.addApplicationFont(str(font_file))
+            if font_id < 0:
+                print(f"Warning: Failed to load font {font_file.name}")
+
+
 def run_labeling_gui():
     app = QApplication(sys.argv)
+    
+    # Load custom fonts (Noto Sans)
+    _load_custom_fonts()
+    
+    # Set application-wide font
+    app_font = QFont("Noto Sans", 10)
+    if not QFontDatabase.hasFamily("Noto Sans"):
+        app_font = QFont("Segoe UI", 10)  # Windows fallback
+    app.setFont(app_font)
+    
     window = LabelingWindow()
     window.show()
     sys.exit(app.exec())

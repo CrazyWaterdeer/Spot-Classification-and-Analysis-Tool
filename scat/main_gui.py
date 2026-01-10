@@ -24,7 +24,8 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QThread, Signal, QSize, QRectF
 from PySide6.QtGui import (
     QFont, QPixmap, QImage, QIcon, QKeySequence, QPainter, 
-    QPen, QColor, QBrush, QShortcut, QPalette, QWheelEvent
+    QPen, QColor, QBrush, QShortcut, QPalette, QWheelEvent,
+    QFontDatabase
 )
 
 # Import SCAT modules
@@ -3276,10 +3277,31 @@ class MainWindow(QMainWindow):
         event.accept()
 
 
+def _load_custom_fonts():
+    """Load custom fonts bundled with the application."""
+    fonts_dir = Path(__file__).parent / "resources" / "fonts"
+    
+    if fonts_dir.exists():
+        for font_file in fonts_dir.glob("*.ttf"):
+            font_id = QFontDatabase.addApplicationFont(str(font_file))
+            if font_id < 0:
+                print(f"Warning: Failed to load font {font_file.name}")
+
+
 def run_gui():
     """Launch the main GUI application."""
     app = QApplication(sys.argv)
     app.setStyle('Fusion')
+    
+    # Load custom fonts (Noto Sans)
+    _load_custom_fonts()
+    
+    # Set application-wide font
+    app_font = QFont("Noto Sans", 10)
+    if not QFontDatabase.hasFamily("Noto Sans"):
+        # Fallback if Noto Sans not available
+        app_font = QFont("Segoe UI", 10)  # Windows fallback
+    app.setFont(app_font)
     
     # Apply dark theme
     app.setStyleSheet(Theme.get_app_stylesheet())
