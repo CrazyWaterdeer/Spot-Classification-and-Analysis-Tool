@@ -1840,12 +1840,12 @@ class TrainingTab(QWidget):
         self.label_dir.setEnabled(not checked)
         if checked:
             # Sync label_dir path with image_dir path
-            self.label_dir.setPath(self.image_dir.path())
+            self.label_dir.set_path(self.image_dir.path())
     
     def _on_image_dir_changed(self, path):
         """When image dir changes, sync label dir if same_folder is checked."""
         if self.same_folder.isChecked():
-            self.label_dir.setPath(path)
+            self.label_dir.set_path(path)
     
     def _on_model_type_changed(self, index):
         """Show/hide settings based on model type."""
