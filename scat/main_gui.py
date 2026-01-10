@@ -614,7 +614,9 @@ class WorkerThread(QThread):
 class PathSelector(QWidget):
     """Widget for selecting file/folder paths."""
     
-    def __init__(self, label: str, is_folder: bool = False, filter: str = "", config_key: str = ""):
+    pathChanged = Signal(str)  # Emitted when path changes
+    
+    def __init__(self, label: str, is_folder: bool = False, filter: str = "", config_key: str = "", default_path: str = ""):
         super().__init__()
         self.is_folder = is_folder
         self.filter = filter
@@ -636,6 +638,7 @@ class PathSelector(QWidget):
         
         self.path_edit = QLineEdit()
         self.path_edit.setPlaceholderText(f"Select {label_text.lower()}...")
+        self.path_edit.textChanged.connect(self.pathChanged.emit)
         
         self.browse_btn = QPushButton("Browse")
         self.browse_btn.setMinimumWidth(80)
@@ -645,14 +648,16 @@ class PathSelector(QWidget):
         layout.addWidget(self.path_edit, 1)
         layout.addWidget(self.browse_btn)
         
-        # Load from config
+        # Load from config, fallback to default_path
         if config_key:
             saved_path = config.get(config_key, "")
             if saved_path:
                 self.path_edit.setText(saved_path)
+            elif default_path:
+                self.path_edit.setText(default_path)
     
     def _browse(self):
-        start_dir = self.path_edit.text() or ""
+        start_dir = self.path_edit.text().replace('/', '\\') or ""  # Convert back for dialog
         
         if self.is_folder:
             path = QFileDialog.getExistingDirectory(self, f"Select {self.label.text()}", start_dir)
@@ -660,17 +665,41 @@ class PathSelector(QWidget):
             path, _ = QFileDialog.getOpenFileName(self, f"Select {self.label.text()}", start_dir, self.filter)
         
         if path:
-            self.path_edit.setText(path)
+            # Display with forward slashes to avoid KRW symbol on Korean Windows
+            display_path = path.replace('\\', '/')
+            self.path_edit.setText(display_path)
             if self.config_key:
-                config.set(self.config_key, path)
+                config.set(self.config_key, path)  # Store original path
     
     def path(self) -> str:
-        return self.path_edit.text()
+        # Return path with system-appropriate separators
+        return self.path_edit.text().replace('/', '\\') if sys.platform == 'win32' else self.path_edit.text()
     
     def set_path(self, path: str):
-        self.path_edit.setText(path)
+        # Display with forward slashes
+        display_path = path.replace('\\', '/') if path else ''
+        self.path_edit.setText(display_path)
         if self.config_key:
             config.set(self.config_key, path)
+
+
+class ZoomableGraphicsView(QGraphicsView):
+    """QGraphicsView with Ctrl+wheel zoom support."""
+    
+    def __init__(self, scene=None):
+        super().__init__(scene) if scene else super().__init__()
+        self.setRenderHint(QPainter.Antialiasing)
+        self.setRenderHint(QPainter.SmoothPixmapTransform)
+        self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
+        self.setDragMode(QGraphicsView.ScrollHandDrag)
+    
+    def wheelEvent(self, event):
+        """Handle Ctrl+wheel for zoom."""
+        if event.modifiers() & Qt.ControlModifier:
+            factor = 1.15 if event.angleDelta().y() > 0 else 1 / 1.15
+            self.scale(factor, factor)
+        else:
+            super().wheelEvent(event)
 
 
 class ImageViewerDialog(QDialog):
@@ -684,12 +713,9 @@ class ImageViewerDialog(QDialog):
         
         layout = QVBoxLayout(self)
         
-        # Use QGraphicsView for better scaling
+        # Use ZoomableGraphicsView for scaling with Ctrl+wheel
         self.scene = QGraphicsScene()
-        self.view = QGraphicsView(self.scene)
-        self.view.setRenderHint(QPainter.Antialiasing)
-        self.view.setRenderHint(QPainter.SmoothPixmapTransform)
-        self.view.setDragMode(QGraphicsView.ScrollHandDrag)
+        self.view = ZoomableGraphicsView(self.scene)
         
         pixmap = QPixmap(image_path)
         if not pixmap.isNull():
@@ -697,6 +723,12 @@ class ImageViewerDialog(QDialog):
             self.scene.setSceneRect(QRectF(pixmap.rect()))
         
         layout.addWidget(self.view)
+        
+        # Hint label
+        hint_label = QLabel("Tip: Ctrl + Mouse wheel to zoom")
+        hint_label.setStyleSheet(f"color: {Theme.TEXT_SECONDARY}; font-size: 11px;")
+        hint_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(hint_label)
         
         # Buttons
         btn_layout = QHBoxLayout()
@@ -1737,6 +1769,7 @@ class TrainingTab(QWidget):
         self.same_folder = QCheckBox("Same as image folder")
         self.same_folder.setChecked(True)
         self.same_folder.toggled.connect(self._toggle_label_dir)
+        self.image_dir.pathChanged.connect(self._on_image_dir_changed)
         
         data_layout.addWidget(self.image_dir)
         data_layout.addWidget(self.label_dir)
@@ -1804,6 +1837,14 @@ class TrainingTab(QWidget):
     
     def _toggle_label_dir(self, checked):
         self.label_dir.setEnabled(not checked)
+        if checked:
+            # Sync label_dir path with image_dir path
+            self.label_dir.setPath(self.image_dir.path())
+    
+    def _on_image_dir_changed(self, path):
+        """When image dir changes, sync label dir if same_folder is checked."""
+        if self.same_folder.isChecked():
+            self.label_dir.setPath(path)
     
     def _on_model_type_changed(self, index):
         """Show/hide settings based on model type."""
@@ -2181,6 +2222,7 @@ class AnalysisTab(QWidget):
     def __init__(self):
         super().__init__()
         self._metadata = None  # In-memory metadata from GroupEditor
+        self._group_data = {}  # {group_name: [file1, file2, ...]}
         self._setup_ui()
     
     def _setup_ui(self):
@@ -2208,31 +2250,61 @@ class AnalysisTab(QWidget):
         io_layout.setSpacing(6)
         io_layout.setContentsMargins(10, 12, 10, 10)
         
-        self.input_dir = PathSelector("Input", is_folder=True, config_key="last_input_dir")
-        self.output_dir = PathSelector("Output", is_folder=True, config_key="last_output_dir")
+        # Default paths
+        default_input = str(Path.home() / "SCAT" / "data" / "images")
+        default_output = str(Path.home() / "SCAT" / "data" / "results")
+        
+        self.input_dir = PathSelector("Input", is_folder=True, config_key="last_input_dir", default_path=default_input)
+        self.output_dir = PathSelector("Output", is_folder=True, config_key="last_output_dir", default_path=default_output)
         self.model_path = PathSelector("Classifier", filter="Model (*.pkl *.pt)", config_key="last_model_path")
         self.detection_model_path = PathSelector("Detection (U-Net)", filter="Model (*.pt)", config_key="last_detection_model_path")
         self.detection_model_path.setToolTip("Optional: U-Net model for improved deposit detection")
         
-        # Groups row with create button
-        metadata_row = QHBoxLayout()
-        self.metadata_path = PathSelector("Groups", filter="CSV (*.csv)", config_key="last_metadata_path")
-        metadata_row.addWidget(self.metadata_path)
+        # Groups section
+        groups_group = QGroupBox("Groups")
+        groups_layout = QVBoxLayout()
+        groups_layout.setSpacing(6)
+        groups_layout.setContentsMargins(10, 12, 10, 10)
         
-        self.create_metadata_btn = QPushButton("Create")
-        self.create_metadata_btn.setToolTip("Create group metadata by organizing files")
-        self.create_metadata_btn.setMinimumWidth(80)
-        self.create_metadata_btn.setMaximumWidth(80)
-        self.create_metadata_btn.clicked.connect(self._open_group_editor)
-        metadata_row.addWidget(self.create_metadata_btn)
+        # Use groups checkbox
+        self.use_groups = QCheckBox("Use groups for comparison")
+        self.use_groups.setChecked(config.get("analysis.use_groups", True))
+        self.use_groups.toggled.connect(self._on_use_groups_toggled)
+        groups_layout.addWidget(self.use_groups)
+        
+        # Create button
+        self.create_groups_btn = QPushButton("Create Groups...")
+        self.create_groups_btn.clicked.connect(self._open_group_editor)
+        groups_layout.addWidget(self.create_groups_btn)
+        
+        # Groups list (shows group names with file counts)
+        self.groups_list = QListWidget()
+        self.groups_list.setMinimumHeight(80)
+        self.groups_list.setMaximumHeight(120)
+        self.groups_list.itemClicked.connect(self._on_group_item_clicked)
+        groups_layout.addWidget(self.groups_list)
+        
+        # Files in selected group (inline expansion)
+        self.group_files_label = QLabel("")
+        self.group_files_label.setWordWrap(True)
+        self.group_files_label.setStyleSheet(f"color: {Theme.TEXT_SECONDARY}; font-size: 11px;")
+        self.group_files_label.hide()
+        groups_layout.addWidget(self.group_files_label)
+        
+        groups_group.setLayout(groups_layout)
         
         io_layout.addWidget(self.input_dir)
         io_layout.addWidget(self.output_dir)
         io_layout.addWidget(self.model_path)
         io_layout.addWidget(self.detection_model_path)
-        io_layout.addLayout(metadata_row)
         io_group.setLayout(io_layout)
         layout.addWidget(io_group)
+        
+        # Add groups section after I/O
+        layout.addWidget(groups_group)
+        
+        # Update groups UI state
+        self._on_use_groups_toggled(self.use_groups.isChecked())
         
         # Options
         options_group = QGroupBox("Options")
@@ -2246,12 +2318,6 @@ class AnalysisTab(QWidget):
         model_type_map = {"threshold": 0, "rf": 1, "cnn": 2}
         self.model_type.setCurrentIndex(model_type_map.get(config.get("analysis.model_type", "rf"), 1))
         options_layout.addRow("Classifier", self.model_type)
-        
-        self.group_by = QLineEdit()
-        self.group_by.setPlaceholderText("e.g., condition")
-        self.group_by.setText(config.get("analysis.group_by", ""))
-        self.group_by.setToolTip("Column name in Groups CSV for statistical comparison (t-test, ANOVA)")
-        options_layout.addRow("Compare by", self.group_by)
         
         self.annotate = QCheckBox("Generate annotated images")
         self.annotate.setChecked(config.get("analysis.annotate", True))
@@ -2315,14 +2381,25 @@ class AnalysisTab(QWidget):
         layout.addWidget(self.run_btn)
         
         # Progress
-        progress_layout = QHBoxLayout()
+        progress_layout = QVBoxLayout()
+        
+        progress_bar_layout = QHBoxLayout()
         self.progress = QProgressBar()
         self.progress_label = QLabel("")
-        progress_layout.addWidget(self.progress)
-        progress_layout.addWidget(self.progress_label)
+        progress_bar_layout.addWidget(self.progress)
+        progress_bar_layout.addWidget(self.progress_label)
+        progress_layout.addLayout(progress_bar_layout)
+        
+        self.eta_label = QLabel("")
+        self.eta_label.setStyleSheet(f"color: {Theme.TEXT_SECONDARY};")
+        progress_layout.addWidget(self.eta_label)
+        
         layout.addLayout(progress_layout)
         
         layout.addStretch()
+        
+        # Initialize timing variables
+        self._start_time = None
         
         # Set scroll content and add to main layout
         scroll_area.setWidget(scroll_content)
@@ -2332,7 +2409,7 @@ class AnalysisTab(QWidget):
         """Save current settings to config."""
         model_types = ['threshold', 'rf', 'cnn']
         config.set("analysis.model_type", model_types[self.model_type.currentIndex()])
-        config.set("analysis.group_by", self.group_by.text())
+        config.set("analysis.use_groups", self.use_groups.isChecked())
         config.set("analysis.annotate", self.annotate.isChecked())
         config.set("analysis.visualize", self.visualize.isChecked())
         config.set("analysis.spatial", self.spatial.isChecked())
@@ -2342,6 +2419,35 @@ class AnalysisTab(QWidget):
         config.set("detection.min_area", self.min_area.value())
         config.set("detection.max_area", self.max_area.value())
         config.set("detection.threshold", self.threshold.value())
+    
+    def _on_use_groups_toggled(self, checked):
+        """Enable/disable groups UI based on checkbox."""
+        self.create_groups_btn.setEnabled(checked)
+        self.groups_list.setEnabled(checked)
+        if not checked:
+            self.group_files_label.hide()
+    
+    def _on_group_item_clicked(self, item):
+        """Show files in selected group (inline expansion)."""
+        group_name = item.text().split(" (")[0]  # Extract group name without count
+        files = self._group_data.get(group_name, [])
+        
+        if files:
+            file_list = ", ".join(files[:5])  # Show first 5
+            if len(files) > 5:
+                file_list += f", ... (+{len(files) - 5} more)"
+            self.group_files_label.setText(f"Files: {file_list}")
+            self.group_files_label.show()
+        else:
+            self.group_files_label.hide()
+    
+    def _update_groups_list(self, group_data: dict):
+        """Update the groups list widget with group data."""
+        self._group_data = group_data
+        self.groups_list.clear()
+        
+        for group_name, files in sorted(group_data.items()):
+            self.groups_list.addItem(f"{group_name} ({len(files)} files)")
     
     def _open_group_editor(self):
         """Open the group editor dialog to create metadata."""
@@ -2375,18 +2481,23 @@ class AnalysisTab(QWidget):
         if dialog.exec():
             metadata = dialog.get_metadata()
             if metadata is not None and len(metadata) > 0:
-                # Store metadata in memory (no temp file needed)
+                # Store metadata in memory
                 self._metadata = metadata
                 
-                # Clear file path since we're using in-memory metadata
-                self.metadata_path.set_path("")
+                # Build group data for the list
+                group_col = metadata.columns[1]  # Second column is the group
+                group_data = {}
+                for group_name in metadata[group_col].unique():
+                    if group_name != 'ungrouped':
+                        files = metadata[metadata[group_col] == group_name]['filename'].tolist()
+                        group_data[group_name] = files
                 
-                # Show group info to user
-                groups = metadata[metadata.columns[1]].unique()
-                group_counts = metadata[metadata.columns[1]].value_counts()
-                info = ", ".join([f"{g}: {group_counts[g]}" for g in groups if g != 'ungrouped'])
-                self.group_by.setText(metadata.columns[1])
-                self.group_by.setToolTip(f"Groups: {info}")
+                # Update internal storage
+                self._group_data = group_data
+                
+                # Update the groups list
+                self._update_groups_list(group_data)
+                self.group_files_label.hide()
     
     def _run_analysis(self):
         input_dir = self.input_dir.path()
@@ -2406,7 +2517,12 @@ class AnalysisTab(QWidget):
         
         self.run_btn.setEnabled(False)
         self.progress.setValue(0)
+        self.eta_label.setText("")
         self._output_dir = str(output_dir)
+        
+        # Record start time for ETA calculation
+        import time
+        self._start_time = time.time()
         
         self.worker = WorkerThread(self._do_analysis, str(output_dir))
         self.worker.progress.connect(self._on_progress)
@@ -2447,12 +2563,25 @@ class AnalysisTab(QWidget):
         
         analyzer = Analyzer(detector=detector, classifier_config=config_obj)
         
-        # Use in-memory metadata if available, otherwise read from file
+        # Use in-memory metadata if available and use_groups is checked
         metadata = None
-        if self._metadata is not None:
-            metadata = self._metadata
-        elif self.metadata_path.path():
-            metadata = pd.read_csv(self.metadata_path.path())
+        group_by = None
+        if self.use_groups.isChecked():
+            if self._group_data:  # In-memory groups from GroupEditor
+                # Create metadata DataFrame from group data
+                rows = []
+                for group_name, files in self._group_data.items():
+                    for filename in files:
+                        rows.append({'filename': filename, 'group': group_name})
+                if rows:
+                    metadata = pd.DataFrame(rows)
+                    group_by = ['group']
+            elif hasattr(self, '_metadata') and self._metadata is not None:
+                metadata = self._metadata
+                # Rename second column to 'group' for consistency
+                if len(metadata.columns) > 1:
+                    metadata = metadata.rename(columns={metadata.columns[1]: 'group'})
+                    group_by = ['group']
         
         results = []
         spatial_results = []
@@ -2470,7 +2599,6 @@ class AnalysisTab(QWidget):
                 spatial_results.append(spatial_result)
         
         reporter = ReportGenerator(output_path)
-        group_by = self.group_by.text().split(',') if self.group_by.text() else None
         reports = reporter.save_all(results, metadata, group_by, save_json=self.save_json.isChecked())
         
         if self.annotate.isChecked():
@@ -2532,13 +2660,36 @@ class AnalysisTab(QWidget):
         }
     
     def _on_progress(self, current, total):
+        import time
+        
         self.progress.setMaximum(total)
         self.progress.setValue(current)
         self.progress_label.setText(f"{current}/{total}")
+        
+        # Calculate ETA
+        if self._start_time and current > 0:
+            elapsed = time.time() - self._start_time
+            avg_per_item = elapsed / current
+            remaining = total - current
+            eta_seconds = avg_per_item * remaining
+            
+            if eta_seconds < 60:
+                eta_text = f"ETA: {int(eta_seconds)}s remaining"
+            elif eta_seconds < 3600:
+                minutes = int(eta_seconds // 60)
+                seconds = int(eta_seconds % 60)
+                eta_text = f"ETA: {minutes}m {seconds}s remaining"
+            else:
+                hours = int(eta_seconds // 3600)
+                minutes = int((eta_seconds % 3600) // 60)
+                eta_text = f"ETA: {hours}h {minutes}m remaining"
+            
+            self.eta_label.setText(eta_text)
     
     def _on_finished(self, results):
         self.run_btn.setEnabled(True)
         self.progress_label.setText("Complete!")
+        self.eta_label.setText("")
         self.analysis_complete.emit(results)
         QMessageBox.information(self, "Analysis Complete", f"Results saved to:\n{results['output_dir']}")
     

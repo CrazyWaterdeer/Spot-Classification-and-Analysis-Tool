@@ -263,7 +263,7 @@ class DepositGraphicsItem(QGraphicsPathItem):
     def paint(self, painter, option, widget=None):
         """Override to prevent Qt's default selection dotted line and optionally draw ID."""
         from PySide6.QtWidgets import QStyle
-        from PySide6.QtGui import QFont
+        from PySide6.QtGui import QFont, QFontDatabase
         
         # Remove the selected state to prevent default selection rectangle
         option.state &= ~QStyle.State_Selected
@@ -271,8 +271,14 @@ class DepositGraphicsItem(QGraphicsPathItem):
         
         # Draw ID number if enabled
         if hasattr(self, 'show_id') and self.show_id:
-            painter.setFont(QFont("Arial", 8))
-            painter.setPen(QPen(QColor(255, 255, 255)))
+            # Use Noto Sans if available, fallback to system font
+            font = QFont("Noto Sans", 9, QFont.Bold)
+            painter.setFont(font)
+            
+            # Use deposit label color for ID text
+            color = self.COLORS.get(self.deposit.label, self.COLORS['unknown'])
+            painter.setPen(QPen(color.darker(120)))
+            
             # Draw at centroid
             cx, cy = self.deposit.centroid
             painter.drawText(int(cx * self.scale) - 5, int(cy * self.scale) + 3, str(self.deposit.id))
@@ -291,7 +297,6 @@ class DepositGraphicsItem(QGraphicsPathItem):
 class ImageViewer(QGraphicsView):
     MODE_SELECT = 0
     MODE_ADD = 1
-    MODE_MERGE = 2
     
     # Add shape modes
     ADD_RECT = 0
@@ -317,6 +322,7 @@ class ImageViewer(QGraphicsView):
         self.drawing = False
         self.start_point = None
         self.rect_item = None
+        self.ellipse_item = None  # For circle preview
         self.freeform_points = []  # For freeform mode
         self.freeform_path_item = None
     
@@ -404,33 +410,38 @@ class ImageViewer(QGraphicsView):
             super().mousePressEvent(event)
             
         elif self.edit_mode == self.MODE_ADD:
+            self.drawing = True
+            self.start_point = self.mapToScene(event.pos())
+            
             if self.add_shape == self.ADD_FREEFORM:
-                # Freeform: click to add point
-                point = self.mapToScene(event.pos())
-                self.freeform_points.append(point)
+                # Freeform: start collecting points
+                self.freeform_points = [self.start_point]
                 self._update_freeform_preview()
+            elif self.add_shape == self.ADD_CIRCLE:
+                # Circle: use ellipse item for preview
+                from PySide6.QtWidgets import QGraphicsEllipseItem
+                self.ellipse_item = QGraphicsEllipseItem()
+                self.ellipse_item.setPen(QPen(QColor(0, 0, 255), 2, Qt.DashLine))
+                self.scene.addItem(self.ellipse_item)
             else:
-                # Rect or Circle: start drag
-                self.drawing = True
-                self.start_point = self.mapToScene(event.pos())
+                # Rectangle
                 self.rect_item = QGraphicsRectItem()
                 self.rect_item.setPen(QPen(QColor(0, 0, 255), 2, Qt.DashLine))
                 self.scene.addItem(self.rect_item)
-        elif self.edit_mode == self.MODE_MERGE:
-            item = self.itemAt(event.pos())
-            if isinstance(item, DepositGraphicsItem):
-                if item in self.selected_items:
-                    item.set_selected(False)
-                    self.selected_items.remove(item)
-                else:
-                    item.set_selected(True)
-                    self.selected_items.append(item)
     
     def mouseMoveEvent(self, event):
         if self.edit_mode == self.MODE_ADD and self.drawing:
             current = self.mapToScene(event.pos())
             
-            if self.add_shape == self.ADD_CIRCLE:
+            if self.add_shape == self.ADD_FREEFORM:
+                # Add point if far enough from last point (spacing)
+                if self.freeform_points:
+                    last = self.freeform_points[-1]
+                    dist = ((current.x() - last.x())**2 + (current.y() - last.y())**2)**0.5
+                    if dist > 3:  # Minimum spacing
+                        self.freeform_points.append(current)
+                        self._update_freeform_preview()
+            elif self.add_shape == self.ADD_CIRCLE:
                 # Circle: center at start_point, radius to current
                 radius = ((current.x() - self.start_point.x())**2 + 
                          (current.y() - self.start_point.y())**2)**0.5
@@ -439,37 +450,42 @@ class ImageViewer(QGraphicsView):
                     self.start_point.y() - radius,
                     radius * 2, radius * 2
                 )
-                self.rect_item.setRect(rect)
+                if hasattr(self, 'ellipse_item') and self.ellipse_item:
+                    self.ellipse_item.setRect(rect)
             else:
                 # Rectangle
                 rect = QRectF(self.start_point, current).normalized()
-                self.rect_item.setRect(rect)
+                if self.rect_item:
+                    self.rect_item.setRect(rect)
         else:
             super().mouseMoveEvent(event)
     
     def mouseReleaseEvent(self, event):
         if self.edit_mode == self.MODE_ADD and self.drawing:
             self.drawing = False
-            if self.rect_item:
-                rect = self.rect_item.rect()
-                self.scene.removeItem(self.rect_item)
-                self.rect_item = None
-                if rect.width() > 5 and rect.height() > 5 and self.parent_window:
-                    if self.add_shape == self.ADD_CIRCLE:
+            
+            if self.add_shape == self.ADD_FREEFORM:
+                # Complete freeform shape
+                if len(self.freeform_points) >= 3 and self.parent_window:
+                    self.parent_window._add_deposit_from_freeform(self.freeform_points)
+                self._clear_freeform()
+            elif self.add_shape == self.ADD_CIRCLE:
+                if hasattr(self, 'ellipse_item') and self.ellipse_item:
+                    rect = self.ellipse_item.rect()
+                    self.scene.removeItem(self.ellipse_item)
+                    self.ellipse_item = None
+                    if rect.width() > 5 and rect.height() > 5 and self.parent_window:
                         self.parent_window._add_deposit_from_circle(rect)
-                    else:
+            else:
+                # Rectangle
+                if self.rect_item:
+                    rect = self.rect_item.rect()
+                    self.scene.removeItem(self.rect_item)
+                    self.rect_item = None
+                    if rect.width() > 5 and rect.height() > 5 and self.parent_window:
                         self.parent_window._add_deposit_from_rect(rect)
         else:
             super().mouseReleaseEvent(event)
-    
-    def mouseDoubleClickEvent(self, event):
-        """Handle double-click to complete freeform shape."""
-        if self.edit_mode == self.MODE_ADD and self.add_shape == self.ADD_FREEFORM:
-            if len(self.freeform_points) >= 3 and self.parent_window:
-                self.parent_window._add_deposit_from_freeform(self.freeform_points)
-            self._clear_freeform()
-        else:
-            super().mouseDoubleClickEvent(event)
     
     def _update_freeform_preview(self):
         """Update the freeform path preview."""
@@ -599,11 +615,9 @@ class LabelingWindow(QMainWindow):
         self.radio_select = QRadioButton("Select (S)")
         self.radio_select.setChecked(True)
         self.radio_add = QRadioButton("Add Deposit (A)")
-        self.radio_merge = QRadioButton("Merge Mode (M)")
         
         self.mode_group.addButton(self.radio_select, ImageViewer.MODE_SELECT)
         self.mode_group.addButton(self.radio_add, ImageViewer.MODE_ADD)
-        self.mode_group.addButton(self.radio_merge, ImageViewer.MODE_MERGE)
         self.mode_group.buttonClicked.connect(self._on_mode_changed)
         
         edit_layout.addWidget(self.radio_select)
@@ -616,19 +630,19 @@ class LabelingWindow(QMainWindow):
         shape_label.setFixedWidth(45)
         self.add_shape_combo = QComboBox()
         self.add_shape_combo.addItems(["Rectangle", "Circle", "Freeform"])
+        self.add_shape_combo.setCurrentIndex(config.get("labeling.add_shape", 0))
         self.add_shape_combo.currentIndexChanged.connect(self._on_shape_changed)
         shape_layout.addWidget(shape_label)
         shape_layout.addWidget(self.add_shape_combo)
         edit_layout.addLayout(shape_layout)
-        
-        edit_layout.addWidget(self.radio_merge)
         
         edit_btn_layout = QHBoxLayout()
         self.btn_delete = QPushButton("Delete (D)")
         self.btn_delete.clicked.connect(self._delete_selected)
         edit_btn_layout.addWidget(self.btn_delete)
         
-        self.btn_merge = QPushButton("Merge Selected")
+        self.btn_merge = QPushButton("Merge (M)")
+        self.btn_merge.setToolTip("Merge selected deposits into one (Ctrl+Click to multi-select)")
         self.btn_merge.clicked.connect(self._merge_selected)
         edit_btn_layout.addWidget(self.btn_merge)
         
@@ -909,8 +923,6 @@ class LabelingWindow(QMainWindow):
             self.radio_select.setChecked(True)
         elif mode == 1:
             self.radio_add.setChecked(True)
-        elif mode == 2:
-            self.radio_merge.setChecked(True)
         self._on_mode_changed()
     
     def _on_mode_changed(self):
@@ -918,14 +930,20 @@ class LabelingWindow(QMainWindow):
         self.viewer.set_mode(mode)
         shape_names = ["Rectangle", "Circle", "Freeform"]
         shape = shape_names[self.viewer.add_shape] if mode == ImageViewer.MODE_ADD else ""
-        modes = {0: "Select", 1: f"Add ({shape})", 2: "Merge (click deposits)"}
+        modes = {0: "Select", 1: f"Add ({shape})"}
         self.statusBar().showMessage(f"Mode: {modes.get(mode, 'Unknown')}")
     
     def _on_shape_changed(self, index: int):
-        """Change add shape mode."""
+        """Change add shape mode and switch to Add mode."""
         self.viewer.add_shape = index
         self.viewer._clear_freeform()  # Clear any pending freeform
-        shape_names = ["Rectangle - drag to draw", "Circle - drag center to edge", "Freeform - click points, double-click to finish"]
+        config.set("labeling.add_shape", index)  # Save preference
+        
+        # Auto-switch to Add mode when shape is selected
+        self.radio_add.setChecked(True)
+        self._on_mode_changed()
+        
+        shape_names = ["Rectangle - drag to draw", "Circle - drag center to edge", "Freeform - drag to draw"]
         self.statusBar().showMessage(f"Add shape: {shape_names[index]}")
     
     def _open_image(self):
