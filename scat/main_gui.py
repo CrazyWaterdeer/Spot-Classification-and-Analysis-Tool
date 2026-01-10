@@ -297,6 +297,32 @@ class Theme:
                 background-color: {Theme.BG_LIGHT};
             }}
             
+            /* Tree Widget */
+            QTreeWidget {{
+                background-color: {Theme.BG_DARK};
+                border: 1px solid {Theme.BORDER};
+                border-radius: 5px;
+            }}
+            QTreeWidget::item {{
+                padding: 4px 8px;
+            }}
+            QTreeWidget::item:selected {{
+                background-color: {Theme.SECONDARY};
+            }}
+            QTreeWidget::item:hover:!selected {{
+                background-color: {Theme.BG_LIGHT};
+            }}
+            QTreeWidget::branch:has-children:!has-siblings:closed,
+            QTreeWidget::branch:closed:has-children:has-siblings {{
+                border-image: none;
+                image: url(none);
+            }}
+            QTreeWidget::branch:open:has-children:!has-siblings,
+            QTreeWidget::branch:open:has-children:has-siblings {{
+                border-image: none;
+                image: url(none);
+            }}
+            
             /* ScrollBar */
             QScrollBar:vertical {{
                 background-color: {Theme.BG_DARK};
@@ -1759,7 +1785,22 @@ class TrainingTab(QWidget):
         self._setup_ui()
     
     def _setup_ui(self):
-        layout = QVBoxLayout(self)
+        # Main layout for the tab
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        
+        # Create scroll area
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll_area.setFrameShape(QScrollArea.NoFrame)
+        
+        # Scroll content widget
+        scroll_content = QWidget()
+        layout = QVBoxLayout(scroll_content)
+        layout.setSpacing(15)
+        layout.setContentsMargins(15, 15, 15, 15)
         
         # Data paths
         data_group = QGroupBox("Data")
@@ -1835,6 +1876,10 @@ class TrainingTab(QWidget):
         layout.addWidget(log_group)
         
         layout.addStretch()
+        
+        # Set scroll content and add to main layout
+        scroll_area.setWidget(scroll_content)
+        main_layout.addWidget(scroll_area)
     
     def _toggle_label_dir(self, checked):
         self.label_dir.setEnabled(not checked)
@@ -2278,19 +2323,15 @@ class AnalysisTab(QWidget):
         self.create_groups_btn.clicked.connect(self._open_group_editor)
         groups_layout.addWidget(self.create_groups_btn)
         
-        # Groups list (shows group names with file counts)
-        self.groups_list = QListWidget()
-        self.groups_list.setMinimumHeight(80)
-        self.groups_list.setMaximumHeight(120)
-        self.groups_list.itemClicked.connect(self._on_group_item_clicked)
-        groups_layout.addWidget(self.groups_list)
-        
-        # Files in selected group (inline expansion)
-        self.group_files_label = QLabel("")
-        self.group_files_label.setWordWrap(True)
-        self.group_files_label.setStyleSheet(f"color: {Theme.TEXT_SECONDARY}; font-size: 11px;")
-        self.group_files_label.hide()
-        groups_layout.addWidget(self.group_files_label)
+        # Groups tree (expandable - click to show files)
+        from PySide6.QtWidgets import QTreeWidget, QTreeWidgetItem
+        self.groups_tree = QTreeWidget()
+        self.groups_tree.setHeaderHidden(True)
+        self.groups_tree.setMinimumHeight(150)
+        self.groups_tree.setMaximumHeight(200)
+        self.groups_tree.setIndentation(15)
+        self.groups_tree.setAnimated(True)
+        groups_layout.addWidget(self.groups_tree)
         
         groups_group.setLayout(groups_layout)
         
@@ -2424,31 +2465,27 @@ class AnalysisTab(QWidget):
     def _on_use_groups_toggled(self, checked):
         """Enable/disable groups UI based on checkbox."""
         self.create_groups_btn.setEnabled(checked)
-        self.groups_list.setEnabled(checked)
-        if not checked:
-            self.group_files_label.hide()
-    
-    def _on_group_item_clicked(self, item):
-        """Show files in selected group (inline expansion)."""
-        group_name = item.text().split(" (")[0]  # Extract group name without count
-        files = self._group_data.get(group_name, [])
-        
-        if files:
-            file_list = ", ".join(files[:5])  # Show first 5
-            if len(files) > 5:
-                file_list += f", ... (+{len(files) - 5} more)"
-            self.group_files_label.setText(f"Files: {file_list}")
-            self.group_files_label.show()
-        else:
-            self.group_files_label.hide()
+        self.groups_tree.setEnabled(checked)
     
     def _update_groups_list(self, group_data: dict):
-        """Update the groups list widget with group data."""
+        """Update the groups tree widget with group data."""
+        from PySide6.QtWidgets import QTreeWidgetItem
+        
         self._group_data = group_data
-        self.groups_list.clear()
+        self.groups_tree.clear()
         
         for group_name, files in sorted(group_data.items()):
-            self.groups_list.addItem(f"{group_name} ({len(files)} files)")
+            # Parent item (group name with count)
+            parent = QTreeWidgetItem([f"{group_name} ({len(files)} files)"])
+            parent.setExpanded(False)
+            
+            # Child items (file names)
+            for filename in sorted(files):
+                child = QTreeWidgetItem([f"  {filename}"])
+                child.setForeground(0, QColor(Theme.TEXT_SECONDARY))
+                parent.addChild(child)
+            
+            self.groups_tree.addTopLevelItem(parent)
     
     def _open_group_editor(self):
         """Open the group editor dialog to create metadata."""
@@ -2496,9 +2533,8 @@ class AnalysisTab(QWidget):
                 # Update internal storage
                 self._group_data = group_data
                 
-                # Update the groups list
+                # Update the groups tree
                 self._update_groups_list(group_data)
-                self.group_files_label.hide()
     
     def _run_analysis(self):
         input_dir = self.input_dir.path()
