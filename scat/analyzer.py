@@ -157,14 +157,92 @@ class Analyzer:
     
     def analyze_batch(
         self, image_paths: List[Union[str, Path]],
-        metadata: Optional[pd.DataFrame] = None, progress_callback=None
+        metadata: Optional[pd.DataFrame] = None, progress_callback=None,
+        parallel: bool = True, max_workers: int = 0
     ) -> List[AnalysisResult]:
-        results = []
-        for i, path in enumerate(image_paths):
-            if progress_callback:
-                progress_callback(i + 1, len(image_paths))
-            results.append(self.analyze_image(path))
+        """
+        Analyze multiple images.
+        
+        Args:
+            image_paths: List of image paths to analyze
+            metadata: Optional metadata DataFrame
+            progress_callback: Callback function(current, total) for progress updates
+            parallel: Enable parallel processing (default True)
+            max_workers: Number of worker threads (0 = auto)
+        
+        Returns:
+            List of AnalysisResult objects in same order as input paths
+        """
+        n_images = len(image_paths)
+        
+        if not parallel or n_images <= 1:
+            # Sequential processing
+            results = []
+            for i, path in enumerate(image_paths):
+                if progress_callback:
+                    progress_callback(i + 1, n_images)
+                results.append(self.analyze_image(path))
+            return results
+        
+        # Parallel processing with ThreadPoolExecutor
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        import os
+        
+        # Determine worker count
+        if max_workers <= 0:
+            max_workers = self._get_safe_worker_count(n_images)
+        
+        results = [None] * n_images
+        completed = 0
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all tasks
+            future_to_idx = {
+                executor.submit(self.analyze_image, path): i
+                for i, path in enumerate(image_paths)
+            }
+            
+            # Collect results as they complete
+            for future in as_completed(future_to_idx):
+                idx = future_to_idx[future]
+                try:
+                    results[idx] = future.result()
+                except Exception as e:
+                    # Create a placeholder result for failed images
+                    path = image_paths[idx]
+                    results[idx] = AnalysisResult(
+                        filename=Path(path).name, deposits=[], dpi=self.dpi
+                    )
+                    print(f"Warning: Failed to analyze {path}: {e}")
+                
+                completed += 1
+                if progress_callback:
+                    progress_callback(completed, n_images)
+        
         return results
+    
+    def _get_safe_worker_count(self, n_images: int) -> int:
+        """Determine safe number of workers based on system resources."""
+        import os
+        
+        cpu_count = os.cpu_count() or 1
+        
+        # Try to check available memory
+        try:
+            import psutil
+            available_gb = psutil.virtual_memory().available / (1024**3)
+            # ~200MB per image processing, be conservative
+            memory_workers = max(1, int(available_gb / 0.3))
+        except ImportError:
+            memory_workers = 2  # Conservative default
+        
+        # Use half of CPUs to keep system responsive
+        cpu_workers = max(1, cpu_count // 2)
+        
+        # Cap at 6 workers max and number of images
+        optimal = min(cpu_workers, memory_workers, 6, n_images)
+        
+        return max(1, optimal)
     
     def generate_annotated_image(
         self, image: np.ndarray, deposits: List[Deposit], 

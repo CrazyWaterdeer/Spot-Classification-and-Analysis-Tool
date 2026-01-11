@@ -16,24 +16,37 @@ class FeatureExtractor:
         self.pixels_per_um = dpi / 25400
     
     def extract_features(self, image: np.ndarray, deposits: List[Deposit]) -> List[Deposit]:
-        """Extract color features for all deposits."""
+        """Extract color features for all deposits.
+        
+        Optimized: Reuses mask array instead of reallocating for each deposit.
+        """
+        if not deposits:
+            return deposits
+        
         hls = cv2.cvtColor(image, cv2.COLOR_RGB2HLS)
         
+        # Pre-allocate mask once (memory optimization)
+        mask = np.zeros(image.shape[:2], dtype=np.uint8)
+        
         for deposit in deposits:
-            mask = np.zeros(image.shape[:2], dtype=np.uint8)
+            # Clear and reuse mask instead of reallocating
+            mask.fill(0)
             cv2.drawContours(mask, [deposit.contour], -1, 255, -1)
             
-            pixels_rgb = image[mask > 0]
-            if len(pixels_rgb) > 0:
-                deposit.mean_r = np.mean(pixels_rgb[:, 0]) / 255.0
-                deposit.mean_g = np.mean(pixels_rgb[:, 1]) / 255.0
-                deposit.mean_b = np.mean(pixels_rgb[:, 2]) / 255.0
+            # Boolean mask for indexing
+            mask_bool = mask > 0
             
-            pixels_hls = hls[mask > 0]
+            pixels_rgb = image[mask_bool]
+            if len(pixels_rgb) > 0:
+                deposit.mean_r = pixels_rgb[:, 0].mean() / 255.0
+                deposit.mean_g = pixels_rgb[:, 1].mean() / 255.0
+                deposit.mean_b = pixels_rgb[:, 2].mean() / 255.0
+            
+            pixels_hls = hls[mask_bool]
             if len(pixels_hls) > 0:
-                deposit.mean_hue = np.mean(pixels_hls[:, 0]) * 2
-                deposit.mean_lightness = np.mean(pixels_hls[:, 1]) / 255.0
-                deposit.mean_saturation = np.mean(pixels_hls[:, 2]) / 255.0
+                deposit.mean_hue = pixels_hls[:, 0].mean() * 2
+                deposit.mean_lightness = pixels_hls[:, 1].mean() / 255.0
+                deposit.mean_saturation = pixels_hls[:, 2].mean() / 255.0
             
             deposit.iod = deposit.area * (1 - deposit.mean_lightness)
         

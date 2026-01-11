@@ -576,6 +576,48 @@ class SettingsDialog(QDialog):
         
         tabs.addTab(shortcuts_widget, "Shortcuts")
         
+        # Performance tab
+        perf_widget = QWidget()
+        perf_layout = QVBoxLayout(perf_widget)
+        
+        parallel_group = QGroupBox("Parallel Processing")
+        parallel_layout = QFormLayout()
+        
+        self.parallel_check = QCheckBox("Enable parallel image processing")
+        self.parallel_check.setChecked(config.get("performance.parallel_enabled", True))
+        self.parallel_check.setToolTip("Process multiple images simultaneously (faster on multi-core systems)")
+        parallel_layout.addRow(self.parallel_check)
+        
+        self.workers_combo = QComboBox()
+        self.workers_combo.addItems(["Auto (recommended)", "1 (sequential)", "2", "4", "6", "8"])
+        worker_setting = config.get("performance.worker_count", 0)  # 0 = auto
+        if worker_setting == 0:
+            self.workers_combo.setCurrentIndex(0)
+        else:
+            idx = {1: 1, 2: 2, 4: 3, 6: 4, 8: 5}.get(worker_setting, 0)
+            self.workers_combo.setCurrentIndex(idx)
+        parallel_layout.addRow("Worker threads:", self.workers_combo)
+        
+        # System info
+        import os
+        cpu_count = os.cpu_count() or 1
+        try:
+            import psutil
+            mem_gb = psutil.virtual_memory().available / (1024**3)
+            sys_info = f"Detected: {cpu_count} CPU cores, {mem_gb:.1f} GB available RAM"
+        except ImportError:
+            sys_info = f"Detected: {cpu_count} CPU cores"
+        
+        info_label = QLabel(f"ℹ️ {sys_info}")
+        info_label.setStyleSheet(f"color: {Theme.TEXT_SECONDARY}; font-size: 11px;")
+        parallel_layout.addRow(info_label)
+        
+        parallel_group.setLayout(parallel_layout)
+        perf_layout.addWidget(parallel_group)
+        perf_layout.addStretch()
+        
+        tabs.addTab(perf_widget, "Performance")
+        
         # Detection tab
         detection_widget = QWidget()
         detection_layout = QFormLayout(detection_widget)
@@ -626,6 +668,11 @@ class SettingsDialog(QDialog):
         config.set("detection.min_area", self.min_area_spin.value())
         config.set("detection.max_area", self.max_area_spin.value())
         config.set("detection.threshold", self.threshold_spin.value())
+        
+        # Save performance settings
+        config.set("performance.parallel_enabled", self.parallel_check.isChecked())
+        worker_map = {0: 0, 1: 1, 2: 2, 3: 4, 4: 6, 5: 8}
+        config.set("performance.worker_count", worker_map.get(self.workers_combo.currentIndex(), 0))
         
         self.accept()
 
@@ -1474,12 +1521,6 @@ class AnalysisTab(QWidget):
         self.run_btn.clicked.connect(self._run_analysis)
         layout.addWidget(self.run_btn)
         
-        # Load Previous Results button
-        self.load_results_btn = QPushButton("📂 Load Previous Results")
-        self.load_results_btn.setToolTip("Load results from a previous analysis session")
-        self.load_results_btn.clicked.connect(self._load_previous_results)
-        layout.addWidget(self.load_results_btn)
-        
         # Progress
         progress_layout = QVBoxLayout()
         
@@ -1599,73 +1640,6 @@ class AnalysisTab(QWidget):
                 # Update the groups tree
                 self._update_groups_list(group_data)
     
-    def _load_previous_results(self):
-        """Load results from a previous analysis session."""
-        # Select results folder
-        folder = QFileDialog.getExistingDirectory(
-            self, "Select Results Folder",
-            config.get("last_output_dir", "")
-        )
-        
-        if not folder:
-            return
-        
-        output_dir = Path(folder)
-        
-        # Check for required files
-        summary_path = output_dir / 'film_summary.csv'
-        deposits_path = output_dir / 'all_deposits.csv'
-        
-        if not summary_path.exists():
-            QMessageBox.critical(self, "Error", "film_summary.csv not found in selected folder.")
-            return
-        
-        try:
-            import pandas as pd
-            
-            # Load data
-            film_summary = pd.read_csv(summary_path)
-            deposit_data = pd.read_csv(deposits_path) if deposits_path.exists() else None
-            
-            # Load visualization results
-            viz_results = {}
-            for img_file in (output_dir / 'visualizations').glob('*.png') if (output_dir / 'visualizations').exists() else []:
-                key = img_file.stem
-                viz_results[key] = str(img_file)
-            
-            # Determine group_by from metadata if available
-            group_by = None
-            if 'group' in film_summary.columns:
-                groups = film_summary['group'].dropna().unique()
-                if len(groups) > 1:
-                    group_by = ['group']
-            
-            # Build results dictionary
-            results = {
-                'output_dir': str(output_dir),
-                'film_summary': film_summary,
-                'deposit_data': deposit_data,
-                'viz_results': viz_results,
-                'group_by': group_by
-            }
-            
-            # Switch to results tab and display
-            if hasattr(self, 'parent') and hasattr(self.parent(), 'tabs'):
-                parent = self.parent()
-                while parent and not hasattr(parent, 'tabs'):
-                    parent = parent.parent()
-                if parent and hasattr(parent, 'tabs'):
-                    parent.tabs.setCurrentIndex(2)  # Results tab
-                    parent.results_tab.results = results
-                    parent.results_tab._needs_regenerate = False
-                    parent.results_tab._display_results(results)
-            
-            QMessageBox.information(self, "Success", f"Loaded results from:\n{output_dir}")
-            
-        except Exception as e:
-            import traceback
-            QMessageBox.critical(self, "Error", f"Failed to load results: {str(e)}\n\n{traceback.format_exc()}")
-    
     def _run_analysis(self):
         input_dir = self.input_dir.path()
         output_base = self.output_dir.path()
@@ -1750,18 +1724,28 @@ class AnalysisTab(QWidget):
                     metadata = metadata.rename(columns={metadata.columns[1]: 'group'})
                     group_by = ['group']
         
-        results = []
-        spatial_results = []
+        # Get parallel processing settings
+        parallel_enabled = config.get("performance.parallel_enabled", True)
+        worker_count = config.get("performance.worker_count", 0)  # 0 = auto
         
-        for i, path in enumerate(image_paths):
-            self.worker.progress.emit(i + 1, len(image_paths))
-            result = analyzer.analyze_image(path)
-            results.append(result)
-            
-            if self.spatial.isChecked():
-                from .spatial import SpatialAnalyzer
+        # Analyze images (potentially in parallel)
+        def progress_cb(current, total):
+            self.worker.progress.emit(current, total)
+        
+        results = analyzer.analyze_batch(
+            image_paths,
+            progress_callback=progress_cb,
+            parallel=parallel_enabled,
+            max_workers=worker_count
+        )
+        
+        # Spatial analysis (sequential - depends on image dimensions)
+        spatial_results = []
+        if self.spatial.isChecked():
+            from .spatial import SpatialAnalyzer
+            spatial_analyzer = SpatialAnalyzer()
+            for path, result in zip(image_paths, results):
                 img = np.array(Image.open(path))
-                spatial_analyzer = SpatialAnalyzer()
                 spatial_result = spatial_analyzer.analyze(result.deposits, img.shape[:2])
                 spatial_results.append(spatial_result)
         
@@ -1900,8 +1884,13 @@ class ResultsTab(QWidget):
         top_row.addWidget(summary_group, 2)
         
         # Buttons (right)
-        buttons_group = QGroupBox("Export")
+        buttons_group = QGroupBox("Actions")
         buttons_layout = QVBoxLayout()
+        
+        self.load_results_btn = QPushButton("📂 Load Previous Results")
+        self.load_results_btn.setToolTip("Load results from a previous analysis session")
+        self.load_results_btn.clicked.connect(self._load_previous_results)
+        buttons_layout.addWidget(self.load_results_btn)
         
         self.open_folder_btn = QPushButton("📁 Open Output Folder")
         self.open_folder_btn.clicked.connect(self._open_folder)
@@ -2489,6 +2478,63 @@ class ResultsTab(QWidget):
             if report_path.exists():
                 import webbrowser
                 webbrowser.open(str(report_path))
+    
+    def _load_previous_results(self):
+        """Load results from a previous analysis session."""
+        folder = QFileDialog.getExistingDirectory(
+            self, "Select Results Folder",
+            config.get("last_output_dir", "")
+        )
+        
+        if not folder:
+            return
+        
+        output_dir = Path(folder)
+        
+        # Check for required files
+        summary_path = output_dir / 'film_summary.csv'
+        deposits_path = output_dir / 'all_deposits.csv'
+        
+        if not summary_path.exists():
+            QMessageBox.critical(self, "Error", "film_summary.csv not found in selected folder.")
+            return
+        
+        try:
+            # Load data
+            film_summary = pd.read_csv(summary_path)
+            deposit_data = pd.read_csv(deposits_path) if deposits_path.exists() else None
+            
+            # Load visualization results
+            viz_results = {}
+            viz_dir = output_dir / 'visualizations'
+            if viz_dir.exists():
+                for img_file in viz_dir.glob('*.png'):
+                    viz_results[img_file.stem] = str(img_file)
+            
+            # Determine group_by from metadata if available
+            group_by = None
+            if 'group' in film_summary.columns:
+                groups = film_summary['group'].dropna().unique()
+                if len(groups) > 1:
+                    group_by = 'group'
+            
+            # Build results dictionary
+            self.results = {
+                'output_dir': str(output_dir),
+                'film_summary': film_summary,
+                'deposit_data': deposit_data,
+                'viz_results': viz_results,
+                'group_by': group_by
+            }
+            
+            self._needs_regenerate = False
+            self._display_results(self.results)
+            
+            QMessageBox.information(self, "Success", f"Loaded results from:\n{output_dir}")
+            
+        except Exception as e:
+            import traceback
+            QMessageBox.critical(self, "Error", f"Failed to load results: {str(e)}\n\n{traceback.format_exc()}")
 
 
 class MainWindow(QMainWindow):
