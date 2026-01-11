@@ -652,7 +652,7 @@ class LabelingWindow(QMainWindow):
         edit_layout = QVBoxLayout()
         
         self.mode_group = QButtonGroup()
-        self.radio_pan = QRadioButton("Pan (H)")
+        self.radio_pan = QRadioButton("Pan (Q)")
         self.radio_pan.setChecked(True)  # Default to pan mode
         self.radio_pan.setToolTip("Drag to pan the view")
         self.radio_select = QRadioButton("Select (S)")
@@ -682,11 +682,12 @@ class LabelingWindow(QMainWindow):
         edit_layout.addLayout(shape_layout)
         
         edit_btn_layout = QHBoxLayout()
-        self.btn_delete = QPushButton("Delete (D)")
+        self.btn_delete = QPushButton("Delete")
+        self.btn_delete.setToolTip("Delete selected deposits (Delete key)")
         self.btn_delete.clicked.connect(self._delete_selected)
         edit_btn_layout.addWidget(self.btn_delete)
         
-        self.btn_merge = QPushButton("Merge (M)")
+        self.btn_merge = QPushButton("Merge (R)")
         self.btn_merge.setToolTip("Merge selected deposits into one (Ctrl+Click to multi-select)")
         self.btn_merge.clicked.connect(self._merge_selected)
         edit_btn_layout.addWidget(self.btn_merge)
@@ -700,7 +701,7 @@ class LabelingWindow(QMainWindow):
         self.btn_group.clicked.connect(self._group_selected)
         group_btn_layout.addWidget(self.btn_group)
         
-        self.btn_ungroup = QPushButton("Ungroup (U)")
+        self.btn_ungroup = QPushButton("Ungroup (F)")
         self.btn_ungroup.setToolTip("Remove selected deposits from their group")
         self.btn_ungroup.clicked.connect(self._ungroup_selected)
         group_btn_layout.addWidget(self.btn_ungroup)
@@ -848,28 +849,28 @@ class LabelingWindow(QMainWindow):
             discard_action.triggered.connect(self._discard_and_close)
             toolbar.addAction(discard_action)
             
-            self.statusBar().showMessage("Edit mode: 1/2/3 to label, D to delete, M to merge, G to group")
+            self.statusBar().showMessage("Edit mode: 1/2/3 to label, R to merge, G to group")
         
         splitter.setSizes([800, 400])
+        
+        # Initialize viewer mode (fixes Pan mode not working on startup)
+        self.viewer.set_mode(ImageViewer.MODE_PAN)
     
     def _setup_shortcuts(self):
         QShortcut(QKeySequence("1"), self, lambda: self._set_selected_label("normal"))
         QShortcut(QKeySequence("2"), self, lambda: self._set_selected_label("rod"))
         QShortcut(QKeySequence("3"), self, lambda: self._set_selected_label("artifact"))
-        QShortcut(QKeySequence("N"), self, self._select_next)
-        QShortcut(QKeySequence("P"), self, self._select_prev)
         QShortcut(QKeySequence("Ctrl+S"), self, self._save_labels)
-        QShortcut(QKeySequence("Ctrl+Z"), self, self._undo)  # Undo
-        QShortcut(QKeySequence("D"), self, self._delete_selected)
+        QShortcut(QKeySequence("Ctrl+Z"), self, self._undo)
         QShortcut(QKeySequence("Delete"), self, self._delete_selected)
-        QShortcut(QKeySequence("H"), self, lambda: self._set_mode(0))  # Pan (Hand)
+        # Mode shortcuts (left hand: Q W E area)
+        QShortcut(QKeySequence("Q"), self, lambda: self._set_mode(0))  # Pan
         QShortcut(QKeySequence("S"), self, lambda: self._set_mode(1))  # Select
         QShortcut(QKeySequence("A"), self, lambda: self._set_mode(2))  # Add
-        # M: execute merge (after multi-select with Ctrl+click)
-        QShortcut(QKeySequence("M"), self, self._merge_selected)
-        # G: group selected, U: ungroup
-        QShortcut(QKeySequence("G"), self, self._group_selected)
-        QShortcut(QKeySequence("U"), self, self._ungroup_selected)
+        # Action shortcuts
+        QShortcut(QKeySequence("R"), self, self._merge_selected)  # meRge
+        QShortcut(QKeySequence("G"), self, self._group_selected)  # Group
+        QShortcut(QKeySequence("F"), self, self._ungroup_selected)  # Free from group
     
     def _save_state(self):
         """Save current state to undo stack."""

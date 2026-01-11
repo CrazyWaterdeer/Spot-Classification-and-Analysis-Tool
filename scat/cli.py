@@ -59,7 +59,9 @@ def analyze_command(args):
         annotated_dir.mkdir(exist_ok=True)
         for path, result in zip(image_paths, results):
             img = np.array(Image.open(path))
-            annotated = analyzer.generate_annotated_image(img, result.deposits)
+            annotated = analyzer.generate_annotated_image(
+                img, result.deposits, show_labels=True, skip_artifacts=True
+            )
             Image.fromarray(annotated).save(annotated_dir / f"{path.stem}_annotated.png")
     
     # Visualizations

@@ -167,12 +167,15 @@ class Analyzer:
         return results
     
     def generate_annotated_image(
-        self, image: np.ndarray, deposits: List[Deposit], show_labels: bool = True
+        self, image: np.ndarray, deposits: List[Deposit], 
+        show_labels: bool = True, skip_artifacts: bool = False
     ) -> np.ndarray:
         result = image.copy()
         colors = {'rod': (255, 0, 0), 'normal': (0, 255, 0), 'artifact': (128, 128, 128), 'unknown': (255, 255, 0)}
         
         for d in deposits:
+            if skip_artifacts and d.label == 'artifact':
+                continue
             color = colors.get(d.label, colors['unknown'])
             cv2.drawContours(result, [d.contour], -1, color, 2)
             if show_labels:

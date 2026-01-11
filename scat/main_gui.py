@@ -549,7 +549,6 @@ class SettingsDialog(QDialog):
                 ("prev_deposit", "Previous Deposit"),
             ]),
             ("Results", [
-                ("export_excel", "Export to Excel"),
                 ("open_detail", "Open Detail View"),
             ]),
         ]
@@ -1475,6 +1474,12 @@ class AnalysisTab(QWidget):
         self.run_btn.clicked.connect(self._run_analysis)
         layout.addWidget(self.run_btn)
         
+        # Load Previous Results button
+        self.load_results_btn = QPushButton("📂 Load Previous Results")
+        self.load_results_btn.setToolTip("Load results from a previous analysis session")
+        self.load_results_btn.clicked.connect(self._load_previous_results)
+        layout.addWidget(self.load_results_btn)
+        
         # Progress
         progress_layout = QVBoxLayout()
         
@@ -1594,6 +1599,73 @@ class AnalysisTab(QWidget):
                 # Update the groups tree
                 self._update_groups_list(group_data)
     
+    def _load_previous_results(self):
+        """Load results from a previous analysis session."""
+        # Select results folder
+        folder = QFileDialog.getExistingDirectory(
+            self, "Select Results Folder",
+            config.get("last_output_dir", "")
+        )
+        
+        if not folder:
+            return
+        
+        output_dir = Path(folder)
+        
+        # Check for required files
+        summary_path = output_dir / 'film_summary.csv'
+        deposits_path = output_dir / 'all_deposits.csv'
+        
+        if not summary_path.exists():
+            QMessageBox.critical(self, "Error", "film_summary.csv not found in selected folder.")
+            return
+        
+        try:
+            import pandas as pd
+            
+            # Load data
+            film_summary = pd.read_csv(summary_path)
+            deposit_data = pd.read_csv(deposits_path) if deposits_path.exists() else None
+            
+            # Load visualization results
+            viz_results = {}
+            for img_file in (output_dir / 'visualizations').glob('*.png') if (output_dir / 'visualizations').exists() else []:
+                key = img_file.stem
+                viz_results[key] = str(img_file)
+            
+            # Determine group_by from metadata if available
+            group_by = None
+            if 'group' in film_summary.columns:
+                groups = film_summary['group'].dropna().unique()
+                if len(groups) > 1:
+                    group_by = ['group']
+            
+            # Build results dictionary
+            results = {
+                'output_dir': str(output_dir),
+                'film_summary': film_summary,
+                'deposit_data': deposit_data,
+                'viz_results': viz_results,
+                'group_by': group_by
+            }
+            
+            # Switch to results tab and display
+            if hasattr(self, 'parent') and hasattr(self.parent(), 'tabs'):
+                parent = self.parent()
+                while parent and not hasattr(parent, 'tabs'):
+                    parent = parent.parent()
+                if parent and hasattr(parent, 'tabs'):
+                    parent.tabs.setCurrentIndex(2)  # Results tab
+                    parent.results_tab.results = results
+                    parent.results_tab._needs_regenerate = False
+                    parent.results_tab._display_results(results)
+            
+            QMessageBox.information(self, "Success", f"Loaded results from:\n{output_dir}")
+            
+        except Exception as e:
+            import traceback
+            QMessageBox.critical(self, "Error", f"Failed to load results: {str(e)}\n\n{traceback.format_exc()}")
+    
     def _run_analysis(self):
         input_dir = self.input_dir.path()
         output_base = self.output_dir.path()
@@ -1701,7 +1773,9 @@ class AnalysisTab(QWidget):
             annotated_dir.mkdir(exist_ok=True)
             for path, result in zip(image_paths, results):
                 img = np.array(Image.open(path))
-                annotated = analyzer.generate_annotated_image(img, result.deposits)
+                annotated = analyzer.generate_annotated_image(
+                    img, result.deposits, show_labels=True, skip_artifacts=True
+                )
                 Image.fromarray(annotated).save(annotated_dir / f"{path.stem}_annotated.png")
         
         viz_results = {}
@@ -1800,6 +1874,7 @@ class ResultsTab(QWidget):
     def __init__(self):
         super().__init__()
         self.results = None
+        self._needs_regenerate = False  # Track if regeneration is needed after editing
         self._setup_ui()
     
     def _setup_ui(self):
@@ -1832,9 +1907,10 @@ class ResultsTab(QWidget):
         self.open_folder_btn.clicked.connect(self._open_folder)
         buttons_layout.addWidget(self.open_folder_btn)
         
-        self.export_excel_btn = QPushButton("📊 Export to Excel")
-        self.export_excel_btn.clicked.connect(self._export_excel)
-        buttons_layout.addWidget(self.export_excel_btn)
+        self.regenerate_btn = QPushButton("🔄 Regenerate All")
+        self.regenerate_btn.setToolTip("Regenerate annotated images, statistics and report after editing")
+        self.regenerate_btn.clicked.connect(self._regenerate_all)
+        buttons_layout.addWidget(self.regenerate_btn)
         
         self.open_report_btn = QPushButton("📄 Open HTML Report")
         self.open_report_btn.clicked.connect(self._open_report)
@@ -2267,6 +2343,9 @@ class ResultsTab(QWidget):
         if all_deposits_path.exists():
             self.results['deposit_data'] = pd.read_csv(all_deposits_path)
         
+        # Mark that regeneration is needed
+        self._needs_regenerate = True
+        
         # Refresh display
         self.load_results(self.results)
     
@@ -2274,18 +2353,135 @@ class ResultsTab(QWidget):
         if self.results and 'output_dir' in self.results:
             os.startfile(self.results['output_dir'])
     
-    def _export_excel(self):
+    def _regenerate_all(self):
+        """Regenerate annotated images, statistics and report after editing."""
         if not self.results:
+            QMessageBox.warning(self, "No Results", "No analysis results to regenerate.")
             return
         
-        path, _ = QFileDialog.getSaveFileName(self, "Save Excel", "", "Excel (*.xlsx)")
-        if path:
-            try:
-                with pd.ExcelWriter(path) as writer:
-                    self.results['film_summary'].to_excel(writer, sheet_name='Film Summary', index=False)
-                QMessageBox.information(self, "Success", f"Saved to {path}")
-            except Exception as e:
-                QMessageBox.critical(self, "Error", str(e))
+        output_dir = Path(self.results['output_dir'])
+        input_dir = config.get("last_input_dir", "")
+        
+        if not output_dir.exists():
+            QMessageBox.critical(self, "Error", f"Output directory not found: {output_dir}")
+            return
+        
+        try:
+            import cv2
+            
+            # Reload data from CSV files
+            summary_path = output_dir / 'film_summary.csv'
+            all_deposits_path = output_dir / 'all_deposits.csv'
+            
+            if not summary_path.exists() or not all_deposits_path.exists():
+                QMessageBox.critical(self, "Error", "Required CSV files not found.")
+                return
+            
+            film_summary = pd.read_csv(summary_path)
+            deposit_data = pd.read_csv(all_deposits_path)
+            
+            self.progress.setValue(10)
+            QApplication.processEvents()
+            
+            # 1. Regenerate annotated images
+            annotated_dir = output_dir / 'annotated'
+            annotated_dir.mkdir(exist_ok=True)
+            deposits_dir = output_dir / 'deposits'
+            
+            colors = {'rod': (255, 0, 0), 'normal': (0, 255, 0), 'artifact': (128, 128, 128)}
+            
+            for idx, row in film_summary.iterrows():
+                filename = row['filename']
+                stem = Path(filename).stem
+                
+                # Find original image
+                image_path = None
+                if input_dir:
+                    for ext in ['.tif', '.tiff', '.png', '.jpg', '.TIF', '.TIFF', '.PNG', '.JPG']:
+                        candidate = Path(input_dir) / f"{stem}{ext}"
+                        if candidate.exists():
+                            image_path = candidate
+                            break
+                
+                if image_path:
+                    image = cv2.imread(str(image_path))
+                    if image is not None:
+                        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                        result = image.copy()
+                        
+                        # Load JSON for contours
+                        json_path = deposits_dir / f"{stem}.labels.json"
+                        if json_path.exists():
+                            with open(json_path) as f:
+                                json_data = json.load(f)
+                            
+                            for d in json_data.get('deposits', []):
+                                label = d.get('label', 'unknown')
+                                # Skip artifacts in annotated images
+                                if label == 'artifact':
+                                    continue
+                                
+                                contour = np.array(d['contour'])
+                                color = colors.get(label, (255, 255, 0))
+                                cv2.drawContours(result, [contour], -1, color, 2)
+                                
+                                # Draw ID
+                                cx = int(np.mean(contour[:, 0]))
+                                cy = int(np.mean(contour[:, 1]))
+                                cv2.putText(result, str(d['id']), (cx + 5, cy - 5),
+                                           cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
+                            
+                            result_bgr = cv2.cvtColor(result, cv2.COLOR_RGB2BGR)
+                            cv2.imwrite(str(annotated_dir / f"{stem}_annotated.png"), result_bgr)
+                
+                self.progress.setValue(10 + int(40 * (idx + 1) / len(film_summary)))
+                QApplication.processEvents()
+            
+            # 2. Regenerate statistics and visualizations
+            from .visualization import generate_all_visualizations
+            from .statistics import StatisticalAnalyzer
+            
+            viz_results = generate_all_visualizations(
+                film_summary, deposit_data, output_dir,
+                group_by=self.results.get('group_by')
+            )
+            
+            self.progress.setValue(70)
+            QApplication.processEvents()
+            
+            stats_analyzer = StatisticalAnalyzer(film_summary)
+            stats_results = stats_analyzer.run_all_tests(
+                group_by=self.results.get('group_by')
+            )
+            
+            self.progress.setValue(80)
+            QApplication.processEvents()
+            
+            # 3. Regenerate HTML report
+            from .report import ReportGenerator
+            reporter = ReportGenerator(output_dir)
+            reporter.generate(
+                film_summary, deposit_data, 
+                stats_results, viz_results,
+                group_by=self.results.get('group_by')
+            )
+            
+            self.progress.setValue(100)
+            
+            # Update results and refresh display
+            self.results['film_summary'] = film_summary
+            self.results['deposit_data'] = deposit_data
+            self.results['viz_results'] = viz_results
+            self._needs_regenerate = False
+            
+            self._display_results(self.results)
+            QMessageBox.information(self, "Success", "All outputs regenerated successfully!")
+            
+        except Exception as e:
+            import traceback
+            QMessageBox.critical(self, "Error", f"Regeneration failed: {str(e)}\n\n{traceback.format_exc()}")
+        finally:
+            self.progress.setValue(0)
     
     def _open_report(self):
         if self.results and 'output_dir' in self.results:
@@ -2408,6 +2604,20 @@ class MainWindow(QMainWindow):
         config.set("window.maximized", self.isMaximized())
     
     def closeEvent(self, event):
+        # Check if regeneration is needed
+        if hasattr(self, 'results_tab') and self.results_tab._needs_regenerate:
+            reply = QMessageBox.question(
+                self, "Unsaved Changes",
+                "You have edited results but not regenerated the outputs.\n\n"
+                "The annotated images, statistics, and HTML report are outdated.\n\n"
+                "Do you want to exit anyway?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            if reply == QMessageBox.No:
+                event.ignore()
+                return
+        
         self._save_window_state()
         event.accept()
 
