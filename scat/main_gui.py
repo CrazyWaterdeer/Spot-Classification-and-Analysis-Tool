@@ -589,25 +589,54 @@ class SettingsDialog(QDialog):
         self.parallel_check.setToolTip("Process multiple images simultaneously (faster on multi-core systems)")
         parallel_layout.addRow(self.parallel_check)
         
+        # Get CPU thread count for dynamic worker options
+        import os
+        cpu_count = os.cpu_count() or 1
+        
+        # Calculate auto worker count for display
+        try:
+            import psutil
+            available_gb = psutil.virtual_memory().available / (1024**3)
+            memory_workers = max(1, int(available_gb / 0.3))
+        except ImportError:
+            memory_workers = 4
+        cpu_workers = max(1, cpu_count // 2)
+        self.auto_worker_count = min(cpu_workers, memory_workers, 20)  # Max 20 for auto
+        
+        # Available worker counts (up to 32, but limited by CPU threads)
+        all_worker_options = [1, 2, 4, 8, 12, 16, 20, 24, 28, 32]
+        self.available_workers = [w for w in all_worker_options if w <= cpu_count]
+        
+        # Build combo box items
         self.workers_combo = QComboBox()
-        self.workers_combo.addItems(["Auto (recommended)", "1 (sequential)", "2", "4", "6", "8"])
+        worker_items = [f"Auto ({self.auto_worker_count})", "1 (sequential)"]
+        for w in self.available_workers[1:]:  # Skip 1, already added
+            worker_items.append(str(w))
+        self.workers_combo.addItems(worker_items)
+        
+        # Set current value
         worker_setting = config.get("performance.worker_count", 0)  # 0 = auto
         if worker_setting == 0:
             self.workers_combo.setCurrentIndex(0)
+        elif worker_setting == 1:
+            self.workers_combo.setCurrentIndex(1)
         else:
-            idx = {1: 1, 2: 2, 4: 3, 6: 4, 8: 5}.get(worker_setting, 0)
-            self.workers_combo.setCurrentIndex(idx)
+            # Find index for this worker count
+            try:
+                idx = self.available_workers.index(worker_setting) + 1  # +1 for Auto at index 0
+                self.workers_combo.setCurrentIndex(idx)
+            except ValueError:
+                self.workers_combo.setCurrentIndex(0)  # Default to Auto if not found
+        
         parallel_layout.addRow("Worker threads:", self.workers_combo)
         
         # System info
-        import os
-        cpu_count = os.cpu_count() or 1
         try:
             import psutil
             mem_gb = psutil.virtual_memory().available / (1024**3)
-            sys_info = f"Detected: {cpu_count} CPU cores, {mem_gb:.1f} GB available RAM"
+            sys_info = f"Detected: {cpu_count} CPU threads, {mem_gb:.1f} GB available RAM"
         except ImportError:
-            sys_info = f"Detected: {cpu_count} CPU cores"
+            sys_info = f"Detected: {cpu_count} CPU threads"
         
         info_label = QLabel(f"ℹ️ {sys_info}")
         info_label.setStyleSheet(f"color: {Theme.TEXT_SECONDARY}; font-size: 11px;")
@@ -672,8 +701,17 @@ class SettingsDialog(QDialog):
         
         # Save performance settings
         config.set("performance.parallel_enabled", self.parallel_check.isChecked())
-        worker_map = {0: 0, 1: 1, 2: 2, 3: 4, 4: 6, 5: 8}
-        config.set("performance.worker_count", worker_map.get(self.workers_combo.currentIndex(), 0))
+        
+        # Get worker count from combo index
+        combo_idx = self.workers_combo.currentIndex()
+        if combo_idx == 0:
+            worker_count = 0  # Auto
+        elif combo_idx == 1:
+            worker_count = 1  # Sequential
+        else:
+            # Index 2+ corresponds to available_workers[1+]
+            worker_count = self.available_workers[combo_idx - 1] if combo_idx - 1 < len(self.available_workers) else 0
+        config.set("performance.worker_count", worker_count)
         
         self.accept()
 

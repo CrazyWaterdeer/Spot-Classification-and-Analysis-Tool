@@ -234,13 +234,13 @@ class Analyzer:
             # ~200MB per image processing, be conservative
             memory_workers = max(1, int(available_gb / 0.3))
         except ImportError:
-            memory_workers = 2  # Conservative default
+            memory_workers = 4  # Conservative default
         
         # Use half of CPUs to keep system responsive
         cpu_workers = max(1, cpu_count // 2)
         
-        # Cap at 6 workers max and number of images
-        optimal = min(cpu_workers, memory_workers, 6, n_images)
+        # Cap at 20 workers max for Auto mode and number of images
+        optimal = min(cpu_workers, memory_workers, 20, n_images)
         
         return max(1, optimal)
     
