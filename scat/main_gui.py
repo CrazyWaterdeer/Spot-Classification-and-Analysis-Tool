@@ -1447,6 +1447,40 @@ class AnalysisTab(QWidget):
         # Update groups UI state
         self._on_use_groups_toggled(self.use_groups.isChecked())
         
+        # Analysis Mode
+        mode_group = QGroupBox("Analysis Mode")
+        mode_layout = QVBoxLayout()
+        mode_layout.setSpacing(8)
+        mode_layout.setContentsMargins(10, 12, 10, 10)
+        
+        self.mode_quick = QRadioButton("Quick Analysis")
+        self.mode_quick.setChecked(True)
+        self.mode_quick.setToolTip(
+            "Detection and classification only.\n"
+            "Review and edit results in Results tab, then generate report."
+        )
+        mode_layout.addWidget(self.mode_quick)
+        
+        quick_desc = QLabel("   Detect and classify only. Review results before generating report.")
+        quick_desc.setStyleSheet(f"color: {Theme.TEXT_SECONDARY}; font-size: 11px;")
+        mode_layout.addWidget(quick_desc)
+        
+        self.mode_full = QRadioButton("Full Analysis")
+        self.mode_full.setToolTip(
+            "Complete analysis including report generation.\n"
+            "Best for well-trained models where manual review is not needed."
+        )
+        mode_layout.addWidget(self.mode_full)
+        
+        full_desc = QLabel("   Complete analysis with statistics and report. Best for trained models.")
+        full_desc.setStyleSheet(f"color: {Theme.TEXT_SECONDARY}; font-size: 11px;")
+        mode_layout.addWidget(full_desc)
+        
+        self.mode_quick.toggled.connect(self._on_mode_changed)
+        
+        mode_group.setLayout(mode_layout)
+        layout.addWidget(mode_group)
+        
         # Options
         options_group = QGroupBox("Options")
         options_layout = QFormLayout()
@@ -1460,6 +1494,7 @@ class AnalysisTab(QWidget):
         self.model_type.setCurrentIndex(model_type_map.get(config.get("analysis.model_type", "rf"), 1))
         options_layout.addRow("Classifier", self.model_type)
         
+        # Report-related options (disabled in Quick mode)
         self.annotate = QCheckBox("Generate annotated images")
         self.annotate.setChecked(config.get("analysis.annotate", True))
         options_layout.addRow(self.annotate)
@@ -1486,7 +1521,11 @@ class AnalysisTab(QWidget):
         options_layout.addRow(self.save_json)
         
         options_group.setLayout(options_layout)
+        self.options_group = options_group  # Store reference for mode toggle
         layout.addWidget(options_group)
+        
+        # Initialize mode state (Quick mode disables report options)
+        self._on_mode_changed(True)
         
         # Detection settings
         detect_group = QGroupBox("Detection Settings")
@@ -1560,6 +1599,31 @@ class AnalysisTab(QWidget):
         config.set("detection.min_area", self.min_area.value())
         config.set("detection.max_area", self.max_area.value())
         config.set("detection.threshold", self.threshold.value())
+    
+    def _on_mode_changed(self, quick_mode: bool):
+        """Enable/disable report options based on analysis mode."""
+        # In Quick mode, disable report-related options
+        report_widgets = [
+            self.annotate,
+            self.visualize,
+            self.spatial,
+            self.stats,
+            self.report
+        ]
+        
+        for widget in report_widgets:
+            widget.setEnabled(not quick_mode)
+            if quick_mode:
+                widget.setChecked(False)
+            else:
+                # Restore to config defaults when Full mode selected
+                pass
+        
+        # Update Options group title to indicate state
+        if quick_mode:
+            self.options_group.setTitle("Options (Report options available in Full mode)")
+        else:
+            self.options_group.setTitle("Options")
     
     def _on_use_groups_toggled(self, checked):
         """Enable/disable groups UI based on checkbox."""
@@ -1802,6 +1866,9 @@ class AnalysisTab(QWidget):
                 group_by=group_by[0] if group_by else None
             )
         
+        # Determine if this was a Quick mode analysis
+        is_quick_mode = self.mode_quick.isChecked()
+        
         return {
             'film_summary': reports['film_summary'],
             'deposit_data': reports['deposit_data'],
@@ -1809,7 +1876,9 @@ class AnalysisTab(QWidget):
             'stats_results': stats_results,
             'viz_results': viz_results,
             'output_dir': str(output_path),
-            'image_paths': [str(p) for p in image_paths]
+            'image_paths': [str(p) for p in image_paths],
+            'group_by': group_by[0] if group_by else None,
+            'is_quick_mode': is_quick_mode
         }
     
     def _on_progress(self, current, total):
@@ -1858,7 +1927,7 @@ class ResultsTab(QWidget):
     def __init__(self):
         super().__init__()
         self.results = None
-        self._needs_regenerate = False  # Track if regeneration is needed after editing
+        self._report_pending = False  # Track if regeneration is needed after editing
         self._setup_ui()
     
     def _setup_ui(self):
@@ -1892,14 +1961,17 @@ class ResultsTab(QWidget):
         self.load_results_btn.clicked.connect(self._load_previous_results)
         buttons_layout.addWidget(self.load_results_btn)
         
+        self.generate_report_btn = QPushButton("📊 Generate Report")
+        self.generate_report_btn.setToolTip(
+            "Generate annotated images, statistics, visualizations, and HTML report.\n"
+            "Use after Quick Analysis or after editing results."
+        )
+        self.generate_report_btn.clicked.connect(self._generate_report)
+        buttons_layout.addWidget(self.generate_report_btn)
+        
         self.open_folder_btn = QPushButton("📁 Open Output Folder")
         self.open_folder_btn.clicked.connect(self._open_folder)
         buttons_layout.addWidget(self.open_folder_btn)
-        
-        self.regenerate_btn = QPushButton("🔄 Regenerate All")
-        self.regenerate_btn.setToolTip("Regenerate annotated images, statistics and report after editing")
-        self.regenerate_btn.clicked.connect(self._regenerate_all)
-        buttons_layout.addWidget(self.regenerate_btn)
         
         self.open_report_btn = QPushButton("📄 Open HTML Report")
         self.open_report_btn.clicked.connect(self._open_report)
@@ -1938,13 +2010,22 @@ class ResultsTab(QWidget):
         self.results = results
         film_summary = results['film_summary']
         
+        # Set report pending flag if Quick mode was used
+        self._report_pending = results.get('is_quick_mode', False)
+        
         total_normal = film_summary['n_normal'].sum()
         total_rod = film_summary['n_rod'].sum()
         total_artifact = film_summary['n_artifact'].sum()
         mean_rod_frac = film_summary['rod_fraction'].mean()
         
+        # Show mode status in summary
+        mode_text = ""
+        if self._report_pending:
+            mode_text = "<p style='color: #DA4E42;'><b>⚠ Quick Analysis:</b> Click 'Generate Report' when ready.</p>"
+        
         summary_text = f"""
         <h3>Summary</h3>
+        {mode_text}
         <p><b>Total Films:</b> {len(film_summary)}</p>
         <p><b>Total Deposits:</b> {film_summary['n_total'].sum():.0f}</p>
         <p><b>Normal:</b> {total_normal:.0f} | <b>ROD:</b> {total_rod:.0f} | <b>Artifact:</b> {total_artifact:.0f}</p>
@@ -2332,8 +2413,8 @@ class ResultsTab(QWidget):
         if all_deposits_path.exists():
             self.results['deposit_data'] = pd.read_csv(all_deposits_path)
         
-        # Mark that regeneration is needed
-        self._needs_regenerate = True
+        # Mark that report regeneration is needed after editing
+        self.results['is_quick_mode'] = True  # Treat as Quick mode (needs report generation)
         
         # Refresh display
         self.load_results(self.results)
@@ -2342,7 +2423,7 @@ class ResultsTab(QWidget):
         if self.results and 'output_dir' in self.results:
             os.startfile(self.results['output_dir'])
     
-    def _regenerate_all(self):
+    def _generate_report(self):
         """Regenerate annotated images, statistics and report after editing."""
         if not self.results:
             QMessageBox.warning(self, "No Results", "No analysis results to regenerate.")
@@ -2461,10 +2542,12 @@ class ResultsTab(QWidget):
             self.results['film_summary'] = film_summary
             self.results['deposit_data'] = deposit_data
             self.results['viz_results'] = viz_results
-            self._needs_regenerate = False
+            self.results['is_quick_mode'] = False  # Report generated, no longer quick mode
+            self._report_pending = False
             
-            self._display_results(self.results)
-            QMessageBox.information(self, "Success", "All outputs regenerated successfully!")
+            # Reload results to update UI
+            self.load_results(self.results)
+            QMessageBox.information(self, "Success", "Report generated successfully!")
             
         except Exception as e:
             import traceback
@@ -2524,11 +2607,11 @@ class ResultsTab(QWidget):
                 'film_summary': film_summary,
                 'deposit_data': deposit_data,
                 'viz_results': viz_results,
-                'group_by': group_by
+                'group_by': group_by,
+                'is_quick_mode': False  # Loaded results are complete
             }
             
-            self._needs_regenerate = False
-            self._display_results(self.results)
+            self.load_results(self.results)
             
             QMessageBox.information(self, "Success", f"Loaded results from:\n{output_dir}")
             
@@ -2582,21 +2665,7 @@ class MainWindow(QMainWindow):
         self.tabs = QTabWidget()
         layout.addWidget(self.tabs)
         
-        # Labeling tab
-        self.labeling_widget = QWidget()
-        labeling_layout = QVBoxLayout(self.labeling_widget)
-        launch_labeling = QPushButton("Launch Labeling Window")
-        launch_labeling.setMinimumHeight(100)
-        launch_labeling.clicked.connect(self._launch_labeling)
-        labeling_layout.addWidget(launch_labeling)
-        labeling_layout.addStretch()
-        self.tabs.addTab(self.labeling_widget, "Labeling")
-        
-        # Training tab
-        self.training_tab = TrainingTab()
-        self.tabs.addTab(self.training_tab, "Training")
-        
-        # Analysis tab
+        # Analysis tab (primary)
         self.analysis_tab = AnalysisTab()
         self.analysis_tab.analysis_complete.connect(self._on_analysis_complete)
         self.tabs.addTab(self.analysis_tab, "Analysis")
@@ -2604,6 +2673,47 @@ class MainWindow(QMainWindow):
         # Results tab
         self.results_tab = ResultsTab()
         self.tabs.addTab(self.results_tab, "Results")
+        
+        # Setup tab (contains Labeling and Training as sub-tabs)
+        self.setup_tab = QWidget()
+        setup_layout = QVBoxLayout(self.setup_tab)
+        
+        setup_intro = QLabel(
+            "Initial setup for your analysis environment. "
+            "Use Labeling to create training data, then Training to build a custom model."
+        )
+        setup_intro.setWordWrap(True)
+        setup_intro.setStyleSheet(f"color: {Theme.TEXT_SECONDARY}; padding: 10px;")
+        setup_layout.addWidget(setup_intro)
+        
+        self.setup_sub_tabs = QTabWidget()
+        
+        # Labeling sub-tab
+        self.labeling_widget = QWidget()
+        labeling_layout = QVBoxLayout(self.labeling_widget)
+        
+        labeling_desc = QLabel(
+            "Create labeled training data by manually marking deposits in images.\n"
+            "This is typically done once per microscope/camera setup."
+        )
+        labeling_desc.setWordWrap(True)
+        labeling_desc.setStyleSheet(f"color: {Theme.TEXT_SECONDARY};")
+        labeling_layout.addWidget(labeling_desc)
+        
+        launch_labeling = QPushButton("Launch Labeling Window")
+        launch_labeling.setMinimumHeight(60)
+        launch_labeling.clicked.connect(self._launch_labeling)
+        labeling_layout.addWidget(launch_labeling)
+        labeling_layout.addStretch()
+        
+        self.setup_sub_tabs.addTab(self.labeling_widget, "Labeling")
+        
+        # Training sub-tab
+        self.training_tab = TrainingTab()
+        self.setup_sub_tabs.addTab(self.training_tab, "Training")
+        
+        setup_layout.addWidget(self.setup_sub_tabs)
+        self.tabs.addTab(self.setup_tab, "Setup")
         
         self.statusBar().showMessage("Ready")
     
@@ -2650,12 +2760,13 @@ class MainWindow(QMainWindow):
         config.set("window.maximized", self.isMaximized())
     
     def closeEvent(self, event):
-        # Check if regeneration is needed
-        if hasattr(self, 'results_tab') and self.results_tab._needs_regenerate:
+        # Check if report generation is pending
+        if hasattr(self, 'results_tab') and self.results_tab._report_pending:
             reply = QMessageBox.question(
-                self, "Unsaved Changes",
-                "You have edited results but not regenerated the outputs.\n\n"
-                "The annotated images, statistics, and HTML report are outdated.\n\n"
+                self, "Report Not Generated",
+                "You have analysis results but the report has not been generated.\n\n"
+                "Click 'Generate Report' in Results tab to create annotated images,\n"
+                "statistics, and HTML report.\n\n"
                 "Do you want to exit anyway?",
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.No
