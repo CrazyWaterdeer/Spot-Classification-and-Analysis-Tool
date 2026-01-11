@@ -2022,6 +2022,11 @@ class ResultsTab(QWidget):
         
         overview_layout.addLayout(top_row)
         
+        # Progress bar for report generation
+        self.progress = QProgressBar()
+        self.progress.setVisible(False)
+        overview_layout.addWidget(self.progress)
+        
         # Table (double-click to view image)
         table_label = QLabel("Double-click a row to view and edit image details:")
         overview_layout.addWidget(table_label)
@@ -2482,6 +2487,12 @@ class ResultsTab(QWidget):
             QMessageBox.critical(self, "Error", f"Output directory not found: {output_dir}")
             return
         
+        # Show progress bar
+        self.progress.setVisible(True)
+        self.progress.setRange(0, 100)
+        self.progress.setValue(0)
+        QApplication.processEvents()
+        
         try:
             import cv2
             
@@ -2492,6 +2503,7 @@ class ResultsTab(QWidget):
             all_deposits_path = output_dir / 'all_deposits.csv'
             
             if not summary_path.exists() or not all_deposits_path.exists():
+                self.progress.setVisible(False)
                 QMessageBox.critical(self, "Error", "Required CSV files not found.")
                 return
             
@@ -2593,6 +2605,9 @@ class ResultsTab(QWidget):
             self.results['is_quick_mode'] = False  # Report generated, no longer quick mode
             self._report_pending = False
             
+            # Hide progress bar
+            self.progress.setVisible(False)
+            
             # Reload results to update UI
             self.load_results(self.results)
             QMessageBox.information(self, "Success", "Report generated successfully!")
@@ -2601,6 +2616,7 @@ class ResultsTab(QWidget):
             import traceback
             QMessageBox.critical(self, "Error", f"Regeneration failed: {str(e)}\n\n{traceback.format_exc()}")
         finally:
+            self.progress.setVisible(False)
             self.progress.setValue(0)
     
     def _open_report(self):
