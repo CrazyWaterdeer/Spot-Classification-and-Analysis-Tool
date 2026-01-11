@@ -9,6 +9,53 @@ from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 import warnings
 
+# Feature label mapping for proper display
+FEATURE_LABELS = {
+    # Counts
+    'n_total': 'Total Count',
+    'n_normal': 'Normal Count',
+    'n_rod': 'ROD Count',
+    'n_artifact': 'Artifact Count',
+    # Fractions
+    'rod_fraction': 'ROD Fraction',
+    # Area
+    'normal_mean_area': 'Normal Mean Area (px²)',
+    'normal_std_area': 'Normal Area Std (px²)',
+    'rod_mean_area': 'ROD Mean Area (px²)',
+    'rod_std_area': 'ROD Area Std (px²)',
+    'area_px': 'Area (px²)',
+    'area_um2': 'Area (μm²)',
+    # IOD
+    'normal_mean_iod': 'Normal Mean IOD',
+    'normal_total_iod': 'Normal Total IOD',
+    'rod_mean_iod': 'ROD Mean IOD',
+    'rod_total_iod': 'ROD Total IOD',
+    'total_iod': 'Total IOD',
+    'iod': 'IOD',
+    # Color features
+    'mean_hue': 'Mean Hue (°)',
+    'normal_mean_hue': 'Normal Mean Hue (°)',
+    'rod_mean_hue': 'ROD Mean Hue (°)',
+    'mean_saturation': 'Mean Saturation',
+    'mean_lightness': 'Mean Lightness',
+    'normal_mean_lightness': 'Normal Mean Lightness',
+    'rod_mean_lightness': 'ROD Mean Lightness',
+    # Shape features
+    'circularity': 'Circularity',
+    'normal_mean_circularity': 'Normal Mean Circularity',
+    'rod_mean_circularity': 'ROD Mean Circularity',
+    'aspect_ratio': 'Aspect Ratio',
+    # Position
+    'x': 'X Position (px)',
+    'y': 'Y Position (px)',
+    'width': 'Width (px)',
+    'height': 'Height (px)',
+}
+
+def get_feature_label(feature: str) -> str:
+    """Get display label for a feature name."""
+    return FEATURE_LABELS.get(feature, feature.replace('_', ' ').title())
+
 # Lazy loading flags
 _viz_libs_loaded = False
 _plt = None
@@ -91,7 +138,7 @@ class Visualizer:
         film_summary: pd.DataFrame,
         features: List[str] = None,
         color_by: str = None,
-        title: str = "PCA of Film Samples",
+        title: str = "PCA of Image Samples",
         filename: str = "pca_plot.png"
     ) -> Optional[str]:
         """
@@ -176,7 +223,7 @@ class Visualizer:
             )
             ax.text(
                 loadings[i, 0]*scale*1.1, loadings[i, 1]*scale*1.1,
-                feature, fontsize=8, color='red', alpha=0.7
+                get_feature_label(feature), fontsize=8, color='red', alpha=0.7
             )
         
         _plt.tight_layout()
@@ -272,9 +319,10 @@ class Visualizer:
             ax=ax, color='black', alpha=0.5, size=4
         )
         
-        ax.set_title(title or f'{metric} by {group_by}')
-        ax.set_ylabel(ylabel or metric)
-        ax.set_xlabel(group_by)
+        metric_label = get_feature_label(metric)
+        ax.set_title(title or f'{metric_label} by {group_by.replace("_", " ").title()}')
+        ax.set_ylabel(ylabel or metric_label)
+        ax.set_xlabel(group_by.replace("_", " ").title())
         
         _plt.tight_layout()
         filepath = self.output_dir / (filename or f'violin_{metric}_by_{group_by}.png')
@@ -301,10 +349,15 @@ class Visualizer:
         if not metrics:
             return None
         
+        # Rename metrics for display
+        rename_map = {m: get_feature_label(m) for m in metrics}
+        plot_df = film_summary[[group_by] + metrics].copy()
+        plot_df = plot_df.rename(columns=rename_map)
+        
         # Melt data for grouped plotting
-        df_melted = film_summary.melt(
+        df_melted = plot_df.melt(
             id_vars=[group_by],
-            value_vars=metrics,
+            value_vars=[rename_map[m] for m in metrics],
             var_name='Metric',
             value_name='Value'
         )
@@ -357,6 +410,9 @@ class Visualizer:
         
         # Standardize for visualization
         df_scaled = (df - df.mean()) / df.std()
+        
+        # Rename columns for display
+        df_scaled.columns = [get_feature_label(f) for f in features]
         
         # Set index
         if row_label in film_summary.columns:
@@ -412,6 +468,11 @@ class Visualizer:
             return None
         
         plot_df = film_summary[features].copy()
+        
+        # Rename columns for display
+        rename_map = {f: get_feature_label(f) for f in features}
+        plot_df = plot_df.rename(columns=rename_map)
+        
         if color_by and color_by in film_summary.columns:
             plot_df[color_by] = film_summary[color_by]
             g = _sns.pairplot(plot_df, hue=color_by, palette='Set1', diag_kind='kde')

@@ -6,23 +6,72 @@ ML-based analysis tool for *Drosophila* excreta to classify ROD (Reproductive Ob
 
 ## Installation
 
+### Windows
+
+**Option 1: Standalone Executable (Recommended)**
+- Download `SCAT.exe` from Releases
+- No Python installation required
+
+**Option 2: From Source**
 ```bash
 cd scat
 pip install -e .
+```
 
-# Or with uv
-uv add numpy opencv-python Pillow pandas scikit-learn scipy PySide6 matplotlib seaborn jinja2
+### macOS
+
+```bash
+# Install Python 3.10+ if not present
+brew install python@3.11
+
+cd scat
+pip install -e .
+
+# Launch GUI
+python -m scat.cli gui
+```
+
+### Linux (Ubuntu/Debian)
+
+```bash
+# Install dependencies
+sudo apt-get install python3-pip python3-venv libxcb-cursor0
+
+cd scat
+pip install -e .
+
+# Launch GUI
+python -m scat.cli gui
+```
+
+### Using uv (All Platforms)
+
+```bash
+# Install uv (fast Python package manager)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+cd scat
 uv pip install -e .
 
-# For CNN training (optional):
+# Launch GUI
+uv run python -m scat.cli gui
+```
+
+### Optional Dependencies
+
+```bash
+# For CNN training (requires CUDA for GPU acceleration):
 pip install torch torchvision
+
+# For PDF export:
+pip install weasyprint
 ```
 
 ## Quick Start - GUI
 
 ```bash
 # Launch the main GUI application
-uv run python -m scat.cli gui
+python -m scat.cli gui
 ```
 
 The GUI provides:

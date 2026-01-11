@@ -1,6 +1,7 @@
 """
 Statistical analysis module for SCAT.
 Provides group comparisons, normality tests, and effect sizes.
+Supports multi-group analysis with control/treatment designation.
 """
 
 import numpy as np
@@ -9,6 +10,59 @@ from typing import List, Dict, Tuple, Optional
 from itertools import combinations
 
 # scipy is imported lazily when needed
+
+# Keywords for auto-detecting group types
+CONTROL_KEYWORDS = ['control', 'ctrl', 'neg', 'negative', 'vehicle', 'wt', 'wild']
+POSITIVE_CONTROL_KEYWORDS = ['positive', 'pos', 'pos_ctrl', 'positive_control']
+TREATMENT_KEYWORDS = ['treatment', 'treat', 'treated', 'exp', 'experimental', 'test']
+
+
+def detect_group_type(group_name: str) -> str:
+    """
+    Auto-detect group type from name.
+    
+    Returns:
+        'negative_control', 'positive_control', 'treatment', or 'unknown'
+    """
+    name_lower = group_name.lower().replace(' ', '_').replace('-', '_')
+    
+    # Check positive control first (more specific)
+    for kw in POSITIVE_CONTROL_KEYWORDS:
+        if kw in name_lower:
+            return 'positive_control'
+    
+    # Then negative control
+    for kw in CONTROL_KEYWORDS:
+        if kw in name_lower:
+            return 'negative_control'
+    
+    # Then treatment
+    for kw in TREATMENT_KEYWORDS:
+        if kw in name_lower:
+            return 'treatment'
+    
+    return 'unknown'
+
+
+def categorize_groups(group_names: List[str]) -> Dict[str, List[str]]:
+    """
+    Categorize groups into control/treatment categories.
+    
+    Returns:
+        Dict with keys: 'negative_control', 'positive_control', 'treatment', 'unknown'
+    """
+    categories = {
+        'negative_control': [],
+        'positive_control': [],
+        'treatment': [],
+        'unknown': []
+    }
+    
+    for name in group_names:
+        group_type = detect_group_type(name)
+        categories[group_type].append(name)
+    
+    return categories
 
 
 class StatisticalAnalyzer:
@@ -129,7 +183,8 @@ class StatisticalAnalyzer:
     def compare_multiple_groups(
         self,
         groups: Dict[str, np.ndarray],
-        correction: str = 'holm'
+        correction: str = 'holm',
+        control_groups: List[str] = None
     ) -> Dict:
         """
         Compare multiple groups with correction for multiple comparisons.
@@ -137,6 +192,7 @@ class StatisticalAnalyzer:
         Args:
             groups: Dict mapping group names to data arrays
             correction: 'holm', 'bonferroni', or 'none'
+            control_groups: List of group names to use as controls (for Dunnett-style comparison)
         """
         group_names = list(groups.keys())
         group_data = [np.array(groups[name]) for name in group_names]
@@ -178,18 +234,33 @@ class StatisticalAnalyzer:
         
         # Pairwise comparisons
         pairwise = []
-        pairs = list(combinations(group_names, 2))
         
-        for name1, name2 in pairs:
-            result = self.compare_two_groups(
-                valid_groups[name1], valid_groups[name2],
-                group1_name=name1, group2_name=name2
-            )
-            pairwise.append(result)
+        if control_groups:
+            # Dunnett-style: only compare treatments vs controls
+            controls = [c for c in control_groups if c in valid_groups]
+            treatments = [g for g in group_names if g not in controls]
+            
+            for control in controls:
+                for treatment in treatments:
+                    result = self.compare_two_groups(
+                        valid_groups[control], valid_groups[treatment],
+                        group1_name=control, group2_name=treatment
+                    )
+                    result['comparison_type'] = 'control_vs_treatment'
+                    pairwise.append(result)
+        else:
+            # All pairwise comparisons
+            pairs = list(combinations(group_names, 2))
+            for name1, name2 in pairs:
+                result = self.compare_two_groups(
+                    valid_groups[name1], valid_groups[name2],
+                    group1_name=name1, group2_name=name2
+                )
+                result['comparison_type'] = 'pairwise'
+                pairwise.append(result)
         
         # Apply correction (only for valid results with p_value)
         if correction != 'none' and pairwise:
-            # Filter results that have p_value (not error results)
             valid_results = [r for r in pairwise if 'p_value' in r]
             
             if valid_results:
@@ -200,6 +271,20 @@ class StatisticalAnalyzer:
                     result['p_value_corrected'] = p_corr
                     result['significant_corrected'] = p_corr < self.alpha
         
+        # Calculate group statistics summary
+        group_stats = {}
+        for name in group_names:
+            data = valid_groups[name]
+            group_stats[name] = {
+                'n': len(data),
+                'mean': float(np.mean(data)),
+                'std': float(np.std(data)),
+                'median': float(np.median(data)),
+                'min': float(np.min(data)),
+                'max': float(np.max(data)),
+                'ci_95': self._confidence_interval(data)
+            }
+        
         return {
             'overall_test': overall_test,
             'overall_statistic': float(stat),
@@ -207,9 +292,100 @@ class StatisticalAnalyzer:
             'overall_significant': p < self.alpha,
             'n_groups': len(valid_groups),
             'group_names': group_names,
+            'group_statistics': group_stats,
             'correction_method': correction,
-            'pairwise_comparisons': pairwise
+            'pairwise_comparisons': pairwise,
+            'control_groups': control_groups or []
         }
+    
+    def compare_control_vs_treatment(
+        self,
+        groups: Dict[str, np.ndarray],
+        group_types: Dict[str, str] = None
+    ) -> Dict:
+        """
+        Compare aggregated control groups vs treatment groups.
+        
+        Args:
+            groups: Dict mapping group names to data arrays
+            group_types: Optional dict mapping group names to types 
+                        ('negative_control', 'positive_control', 'treatment')
+                        If None, auto-detects from group names.
+        
+        Returns:
+            Dict with control vs treatment comparison results
+        """
+        # Auto-detect group types if not provided
+        if group_types is None:
+            categories = categorize_groups(list(groups.keys()))
+            group_types = {}
+            for gtype, names in categories.items():
+                for name in names:
+                    group_types[name] = gtype
+        
+        # Separate controls and treatments
+        control_data = []
+        treatment_data = []
+        control_names = []
+        treatment_names = []
+        
+        for name, data in groups.items():
+            gtype = group_types.get(name, 'unknown')
+            clean_data = np.array(data)
+            clean_data = clean_data[~np.isnan(clean_data)]
+            
+            if len(clean_data) == 0:
+                continue
+                
+            if gtype in ['negative_control', 'positive_control']:
+                control_data.extend(clean_data)
+                control_names.append(name)
+            elif gtype == 'treatment':
+                treatment_data.extend(clean_data)
+                treatment_names.append(name)
+        
+        control_data = np.array(control_data)
+        treatment_data = np.array(treatment_data)
+        
+        if len(control_data) < 2 or len(treatment_data) < 2:
+            return {
+                'error': 'Insufficient data for control vs treatment comparison',
+                'n_control': len(control_data),
+                'n_treatment': len(treatment_data),
+                'control_groups': control_names,
+                'treatment_groups': treatment_names
+            }
+        
+        # Compare aggregated groups
+        result = self.compare_two_groups(
+            control_data, treatment_data,
+            group1_name='Control (combined)',
+            group2_name='Treatment (combined)'
+        )
+        
+        result['control_groups'] = control_names
+        result['treatment_groups'] = treatment_names
+        result['comparison_type'] = 'aggregated_control_vs_treatment'
+        
+        return result
+    
+    def _confidence_interval(self, data: np.ndarray, confidence: float = 0.95) -> Tuple[float, float]:
+        """Calculate confidence interval for mean."""
+        data = np.array(data)
+        data = data[~np.isnan(data)]
+        
+        if len(data) < 2:
+            return (np.nan, np.nan)
+        
+        n = len(data)
+        mean = np.mean(data)
+        se = self.stats.sem(data)
+        
+        # t-value for confidence interval
+        t_val = self.stats.t.ppf((1 + confidence) / 2, n - 1)
+        margin = t_val * se
+        
+        return (float(mean - margin), float(mean + margin))
     
     def _correct_pvalues(self, p_values: List[float], method: str) -> List[float]:
         """Apply multiple comparison correction."""
@@ -228,108 +404,170 @@ class StatisticalAnalyzer:
                 corrected[idx] = p_values[idx] * (n - rank)
             
             # Enforce monotonicity
-            corrected = np.minimum.accumulate(corrected[sorted_indices][::-1])[::-1]
-            result = np.zeros(n)
-            for rank, idx in enumerate(sorted_indices):
-                result[idx] = min(corrected[rank], 1.0)
-            
-            return list(result)
+            corrected = np.minimum.accumulate(corrected[np.argsort(sorted_indices)][::-1])[::-1]
+            corrected = np.minimum(corrected, 1.0)
+            return list(corrected)
         
         return list(p_values)
     
-    def distribution_comparison(
-        self,
-        group1: np.ndarray,
-        group2: np.ndarray,
-        group1_name: str = 'Group1',
-        group2_name: str = 'Group2'
+    def run_all_tests(
+        self, 
+        film_summary: pd.DataFrame, 
+        group_by: str = None,
+        metrics: List[str] = None,
+        control_groups: List[str] = None
     ) -> Dict:
         """
-        Compare distributions using Kolmogorov-Smirnov test.
-        Useful for hue (pH) distribution comparisons.
+        Run comprehensive statistical analysis.
+        
+        Args:
+            film_summary: DataFrame with image-level data
+            group_by: Column name for grouping
+            metrics: List of metrics to analyze
+            control_groups: List of control group names
+            
+        Returns:
+            Dict with all statistical results
         """
-        group1 = np.array(group1)
-        group2 = np.array(group2)
-        group1 = group1[~np.isnan(group1)]
-        group2 = group2[~np.isnan(group2)]
+        if metrics is None:
+            metrics = ['rod_fraction', 'n_total', 'n_rod', 'n_normal', 
+                      'total_iod', 'normal_mean_area', 'rod_mean_area']
         
-        stat, p = self.stats.ks_2samp(group1, group2)
-        
-        return {
-            'group1_name': group1_name,
-            'group2_name': group2_name,
-            'n1': len(group1),
-            'n2': len(group2),
-            'test_name': 'Kolmogorov-Smirnov',
-            'statistic': float(stat),
-            'p_value': float(p),
-            'significant': p < self.alpha
+        results = {
+            'metrics': {},
+            'summary': {},
+            'control_vs_treatment': {}
         }
+        
+        if group_by is None or group_by not in film_summary.columns:
+            return results
+        
+        # Get unique groups
+        groups = [g for g in film_summary[group_by].unique() if g != 'ungrouped' and pd.notna(g)]
+        
+        if len(groups) < 2:
+            return results
+        
+        # Auto-detect group types
+        categories = categorize_groups(groups)
+        results['group_categories'] = categories
+        
+        # Determine control groups if not specified
+        if control_groups is None:
+            control_groups = categories['negative_control'] + categories['positive_control']
+        
+        results['control_groups'] = control_groups
+        results['n_groups'] = len(groups)
+        
+        for metric in metrics:
+            if metric not in film_summary.columns:
+                continue
+            
+            group_data = {
+                g: film_summary[film_summary[group_by] == g][metric].dropna().values
+                for g in groups
+            }
+            
+            # Filter groups with insufficient data
+            group_data = {k: v for k, v in group_data.items() if len(v) >= 2}
+            
+            if len(group_data) < 2:
+                continue
+            
+            try:
+                # Multi-group comparison
+                results['metrics'][metric] = self.compare_multiple_groups(
+                    group_data, 
+                    correction='holm',
+                    control_groups=control_groups if control_groups else None
+                )
+                
+                # Control vs Treatment comparison
+                if control_groups and len(control_groups) > 0:
+                    results['control_vs_treatment'][metric] = self.compare_control_vs_treatment(
+                        group_data
+                    )
+                    
+            except Exception as e:
+                results['metrics'][metric] = {'error': str(e)}
+        
+        # Generate summary
+        results['summary'] = self._generate_summary(results)
+        
+        return results
+    
+    def _generate_summary(self, results: Dict) -> Dict:
+        """Generate a human-readable summary of statistical results."""
+        summary = {
+            'significant_metrics': [],
+            'large_effects': [],
+            'recommendations': []
+        }
+        
+        for metric, data in results.get('metrics', {}).items():
+            if 'error' in data:
+                continue
+            
+            if data.get('overall_significant'):
+                summary['significant_metrics'].append({
+                    'metric': metric,
+                    'test': data.get('overall_test'),
+                    'p_value': data.get('overall_p_value')
+                })
+            
+            # Check for large effects in pairwise comparisons
+            for pw in data.get('pairwise_comparisons', []):
+                if pw.get('effect_size') == 'large':
+                    summary['large_effects'].append({
+                        'metric': metric,
+                        'group1': pw.get('group1_name'),
+                        'group2': pw.get('group2_name'),
+                        'cohens_d': pw.get('cohens_d')
+                    })
+        
+        # Add recommendations
+        n_groups = results.get('n_groups', 0)
+        if n_groups >= 3:
+            summary['recommendations'].append(
+                'Multiple groups detected. Use corrected p-values for pairwise comparisons.'
+            )
+        
+        ctrl_groups = results.get('control_groups', [])
+        if ctrl_groups:
+            summary['recommendations'].append(
+                f'Control groups identified: {", ".join(ctrl_groups)}. '
+                'Control vs Treatment comparisons available.'
+            )
+        
+        return summary
 
 
-def generate_statistics_report(
+def analyze_groups(
     film_summary: pd.DataFrame,
     group_column: str,
     metrics: List[str] = None
 ) -> Dict:
     """
-    Generate comprehensive statistics report for grouped data.
+    Analyze groups in film summary data.
     
     Args:
-        film_summary: DataFrame with film-level summary
-        group_column: Column name for grouping (e.g., 'condition', 'mating_status')
+        film_summary: DataFrame with image-level statistics
+        group_column: Column name for grouping
         metrics: List of metric columns to analyze
         
     Returns:
         Dict with statistical results
     """
-    if metrics is None:
-        metrics = ['rod_fraction', 'n_total', 'total_iod', 'normal_mean_area', 'rod_mean_area']
-    
     analyzer = StatisticalAnalyzer()
-    results = {}
-    
-    # Get groups, excluding 'ungrouped'
-    groups = [g for g in film_summary[group_column].unique() if g != 'ungrouped']
-    
-    if len(groups) < 2:
-        return {}  # Not enough groups for comparison
-    
-    for metric in metrics:
-        if metric not in film_summary.columns:
-            continue
-        
-        group_data = {
-            g: film_summary[film_summary[group_column] == g][metric].dropna().values
-            for g in groups
-        }
-        
-        # Filter groups with insufficient data
-        group_data = {k: v for k, v in group_data.items() if len(v) >= 2}
-        
-        if len(group_data) < 2:
-            continue
-        
-        try:
-            if len(group_data) == 2:
-                names = list(group_data.keys())
-                results[metric] = analyzer.compare_two_groups(
-                    group_data[names[0]], group_data[names[1]],
-                    group1_name=names[0], group2_name=names[1]
-                )
-            else:
-                results[metric] = analyzer.compare_multiple_groups(group_data)
-        except Exception as e:
-            # Skip metrics that fail
-            results[metric] = {'error': str(e)}
-    
-    return results
+    return analyzer.run_all_tests(film_summary, group_by=group_column, metrics=metrics)
 
 
 class SpatialStatistics:
     """Statistical analysis for spatial data."""
     
     def __init__(self, alpha: float = 0.05):
+        from scipy import stats
+        self.stats = stats
         self.alpha = alpha
     
     def compare_clustering(
@@ -343,8 +581,6 @@ class SpatialStatistics:
         Compare Clark-Evans R values between two groups.
         Tests whether spatial clustering differs between conditions.
         """
-        from scipy import stats
-        
         g1 = np.array(group1_r_values)
         g2 = np.array(group2_r_values)
         
@@ -391,8 +627,6 @@ class SpatialStatistics:
         """
         Compare edge vs center preference between groups.
         """
-        from scipy import stats
-        
         g1 = np.array(group1_edge_fractions)
         g2 = np.array(group2_edge_fractions)
         
@@ -425,8 +659,6 @@ class SpatialStatistics:
         """
         Compare Nearest Neighbor Distances between groups.
         """
-        from scipy import stats
-        
         g1 = np.array(group1_nnd)
         g2 = np.array(group2_nnd)
         

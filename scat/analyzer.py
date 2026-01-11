@@ -286,16 +286,59 @@ class ReportGenerator:
         condition_summary.columns = ['_'.join(col).strip() for col in condition_summary.columns]
         return condition_summary.reset_index()
     
-    def generate_deposit_data(self, results: List[AnalysisResult], metadata: Optional[pd.DataFrame] = None) -> pd.DataFrame:
+    def generate_deposit_data(
+        self, results: List[AnalysisResult], 
+        metadata: Optional[pd.DataFrame] = None,
+        exclude_artifacts: bool = True
+    ) -> pd.DataFrame:
+        """
+        Generate combined deposit data from all results.
+        
+        Args:
+            results: List of analysis results
+            metadata: Optional metadata DataFrame
+            exclude_artifacts: If True, exclude artifact deposits from output
+        
+        Returns:
+            DataFrame with global IDs assigned
+        """
         df = pd.concat([r.to_dataframe() for r in results], ignore_index=True)
+        
+        # Exclude artifacts if requested
+        if exclude_artifacts and 'label' in df.columns:
+            df = df[df['label'] != 'artifact'].copy()
+        
+        # Rename original id to image_id and assign global id
+        if 'id' in df.columns:
+            df = df.rename(columns={'id': 'image_id'})
+            df.insert(0, 'id', range(1, len(df) + 1))
+        
         if metadata is not None:
             df = df.merge(metadata, on='filename', how='left')
+        
         return df
     
-    def save_individual_deposits(self, results: List[AnalysisResult], metadata: Optional[pd.DataFrame] = None, save_json: bool = True):
-        """Save individual CSV file for each image."""
+    def save_individual_deposits(
+        self, results: List[AnalysisResult], 
+        metadata: Optional[pd.DataFrame] = None, 
+        save_json: bool = True,
+        exclude_artifacts: bool = True
+    ):
+        """Save individual CSV file for each image.
+        
+        Args:
+            results: List of analysis results
+            metadata: Optional metadata DataFrame
+            save_json: Whether to save JSON files (always includes artifacts for training)
+            exclude_artifacts: If True, exclude artifact deposits from CSV output
+        """
         for result in results:
             df = result.to_dataframe()
+            
+            # Exclude artifacts from CSV if requested
+            if exclude_artifacts and 'label' in df.columns:
+                df = df[df['label'] != 'artifact'].copy()
+            
             if metadata is not None:
                 df = df.merge(metadata, on='filename', how='left')
             
@@ -313,7 +356,7 @@ class ReportGenerator:
             filepath = self.deposits_dir / f'{image_stem}_deposits.csv'
             df.to_csv(filepath, index=False)
             
-            # Optionally save contour data as JSON for retraining
+            # JSON always includes all deposits (including artifacts) for training
             if save_json:
                 self._save_contour_json(result, image_stem)
     
@@ -366,25 +409,40 @@ class ReportGenerator:
             save_individual: Whether to save individual deposit files per image
             save_json: Whether to save JSON files for retraining
         """
-        # Film summary
-        film_summary = self.generate_film_summary(results, metadata)
-        film_summary.to_csv(self.output_dir / 'film_summary.csv', index=False)
+        # Image summary (formerly film_summary)
+        image_summary = self.generate_film_summary(results, metadata)
+        image_summary.to_csv(self.output_dir / 'image_summary.csv', index=False)
         
         # Condition summary
         if group_by and metadata is not None:
-            condition_summary = self.generate_condition_summary(film_summary, group_by)
+            condition_summary = self.generate_condition_summary(image_summary, group_by)
             condition_summary.to_csv(self.output_dir / 'condition_summary.csv', index=False)
         
         # Individual deposit files per image
         if save_individual:
             self.save_individual_deposits(results, metadata, save_json=save_json)
         
-        # Combined deposit data (optional, for convenience)
+        # Combined deposit data
         deposit_data = self.generate_deposit_data(results, metadata)
         deposit_data.to_csv(self.output_dir / 'all_deposits.csv', index=False)
         
+        # Group-specific deposit files
+        if group_by and metadata is not None:
+            group_col = group_by[0] if isinstance(group_by, list) else group_by
+            if group_col in deposit_data.columns:
+                groups_dir = self.output_dir / 'groups'
+                groups_dir.mkdir(exist_ok=True)
+                
+                for group_name in deposit_data[group_col].dropna().unique():
+                    group_df = deposit_data[deposit_data[group_col] == group_name].copy()
+                    # Re-assign IDs within group
+                    group_df['id'] = range(1, len(group_df) + 1)
+                    safe_name = str(group_name).replace(' ', '_').replace('/', '_')
+                    group_df.to_csv(groups_dir / f'{safe_name}_deposits.csv', index=False)
+        
         return {
-            'film_summary': film_summary, 
+            'film_summary': image_summary,  # Keep 'film_summary' key for backwards compatibility
+            'image_summary': image_summary, 
             'deposit_data': deposit_data,
             'deposits_dir': str(self.deposits_dir)
         }

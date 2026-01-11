@@ -304,6 +304,7 @@ class ImageViewer(QGraphicsView):
     ADD_RECT = 0
     ADD_CIRCLE = 1
     ADD_FREEFORM = 2
+    ADD_MANUAL = 3    # Manual mode: draw area directly as deposit
     
     def __init__(self, parent=None):
         super().__init__()
@@ -327,6 +328,8 @@ class ImageViewer(QGraphicsView):
         self.ellipse_item = None  # For circle preview
         self.freeform_points = []  # For freeform mode
         self.freeform_path_item = None
+        self.manual_points = []  # For manual mode
+        self.manual_path_item = None
         self.selection_rect = None  # For box selection
     
     def set_mode(self, mode: int):
@@ -433,6 +436,10 @@ class ImageViewer(QGraphicsView):
                 # Freeform: start collecting points
                 self.freeform_points = [self.start_point]
                 self._update_freeform_preview()
+            elif self.add_shape == self.ADD_MANUAL:
+                # Manual: like freeform but creates deposit directly from drawn shape
+                self.manual_points = [self.start_point]
+                self._update_manual_preview()
             elif self.add_shape == self.ADD_CIRCLE:
                 # Circle: use ellipse item for preview
                 from PySide6.QtWidgets import QGraphicsEllipseItem
@@ -462,6 +469,14 @@ class ImageViewer(QGraphicsView):
                     if dist > 3:  # Minimum spacing
                         self.freeform_points.append(current)
                         self._update_freeform_preview()
+            elif self.add_shape == self.ADD_MANUAL:
+                # Manual: add point if far enough from last point
+                if self.manual_points:
+                    last = self.manual_points[-1]
+                    dist = ((current.x() - last.x())**2 + (current.y() - last.y())**2)**0.5
+                    if dist > 3:  # Minimum spacing
+                        self.manual_points.append(current)
+                        self._update_manual_preview()
             elif self.add_shape == self.ADD_CIRCLE:
                 # Circle: center at start_point, radius to current
                 radius = ((current.x() - self.start_point.x())**2 + 
@@ -509,6 +524,11 @@ class ImageViewer(QGraphicsView):
                 if len(self.freeform_points) >= 3 and self.parent_window:
                     self.parent_window._add_deposit_from_freeform(self.freeform_points)
                 self._clear_freeform()
+            elif self.add_shape == self.ADD_MANUAL:
+                # Complete manual shape - directly use drawn area as deposit
+                if len(self.manual_points) >= 3 and self.parent_window:
+                    self.parent_window._add_deposit_from_manual(self.manual_points)
+                self._clear_manual()
             elif self.add_shape == self.ADD_CIRCLE:
                 if hasattr(self, 'ellipse_item') and self.ellipse_item:
                     rect = self.ellipse_item.rect()
@@ -550,6 +570,31 @@ class ImageViewer(QGraphicsView):
         if self.freeform_path_item:
             self.scene.removeItem(self.freeform_path_item)
             self.freeform_path_item = None
+    
+    def _update_manual_preview(self):
+        """Update the manual path preview."""
+        if self.manual_path_item:
+            self.scene.removeItem(self.manual_path_item)
+        
+        if len(self.manual_points) < 2:
+            return
+        
+        path = QPainterPath()
+        path.moveTo(self.manual_points[0])
+        for point in self.manual_points[1:]:
+            path.lineTo(point)
+        
+        # Use a different color (green) to distinguish from freeform
+        self.manual_path_item = self.scene.addPath(
+            path, QPen(QColor(0, 200, 0), 2, Qt.DashLine)
+        )
+    
+    def _clear_manual(self):
+        """Clear manual drawing state."""
+        self.manual_points.clear()
+        if self.manual_path_item:
+            self.scene.removeItem(self.manual_path_item)
+            self.manual_path_item = None
 
 
 class LabelingWindow(QMainWindow):
@@ -674,9 +719,13 @@ class LabelingWindow(QMainWindow):
         shape_label = QLabel("Shape:")
         shape_label.setFixedWidth(45)
         self.add_shape_combo = QComboBox()
-        self.add_shape_combo.addItems(["Rectangle", "Circle", "Freeform"])
+        self.add_shape_combo.addItems(["Rectangle", "Circle", "Freeform", "Manual"])
         self.add_shape_combo.setCurrentIndex(config.get("labeling.add_shape", 0))
         self.add_shape_combo.currentIndexChanged.connect(self._on_shape_changed)
+        self.add_shape_combo.setToolTip(
+            "Rectangle/Circle/Freeform: Auto-detect deposits in selected area\n"
+            "Manual: Draw deposit boundary directly (no auto-detection)"
+        )
         shape_layout.addWidget(shape_label)
         shape_layout.addWidget(self.add_shape_combo)
         edit_layout.addLayout(shape_layout)
@@ -977,7 +1026,7 @@ class LabelingWindow(QMainWindow):
     def _on_mode_changed(self):
         mode = self.mode_group.checkedId()
         self.viewer.set_mode(mode)
-        shape_names = ["Rectangle", "Circle", "Freeform"]
+        shape_names = ["Rectangle", "Circle", "Freeform", "Manual"]
         shape = shape_names[self.viewer.add_shape] if mode == ImageViewer.MODE_ADD else ""
         modes = {0: "Pan", 1: "Select", 2: f"Add ({shape})"}
         self.statusBar().showMessage(f"Mode: {modes.get(mode, 'Unknown')}")
@@ -986,13 +1035,20 @@ class LabelingWindow(QMainWindow):
         """Change add shape mode and switch to Add mode."""
         self.viewer.add_shape = index
         self.viewer._clear_freeform()  # Clear any pending freeform
+        if hasattr(self.viewer, '_clear_manual'):
+            self.viewer._clear_manual()  # Clear any pending manual
         config.set("labeling.add_shape", index)  # Save preference
         
         # Auto-switch to Add mode when shape is selected
         self.radio_add.setChecked(True)
         self._on_mode_changed()
         
-        shape_names = ["Rectangle - drag to draw", "Circle - drag center to edge", "Freeform - drag to draw"]
+        shape_names = [
+            "Rectangle - drag to draw", 
+            "Circle - drag center to edge", 
+            "Freeform - drag to draw (auto-detect)",
+            "Manual - drag to draw (exact shape)"
+        ]
         self.statusBar().showMessage(f"Add shape: {shape_names[index]}")
     
     def _open_image(self):
@@ -1222,6 +1278,50 @@ class LabelingWindow(QMainWindow):
         self._update_table()
         self._update_stats()
         self.statusBar().showMessage(f"Added deposit {deposit.id}")
+    
+    def _add_deposit_from_manual(self, points: list):
+        """Add deposit directly from drawn polygon (no auto-detection)."""
+        if self.image is None or len(points) < 3:
+            return
+        
+        self._save_state()
+        
+        # Convert QPointF to numpy array - use drawn shape directly
+        contour = np.array([[int(p.x()), int(p.y())] for p in points], dtype=np.int32)
+        
+        # Close the contour
+        contour = contour.reshape((-1, 1, 2))
+        
+        area = cv2.contourArea(contour)
+        if area < 5:  # Too small
+            return
+            
+        perimeter = cv2.arcLength(contour, True)
+        circularity = 4 * np.pi * area / (perimeter ** 2) if perimeter > 0 else 0
+        
+        bx, by, bw, bh = cv2.boundingRect(contour)
+        aspect_ratio = max(bw, bh) / min(bw, bh) if min(bw, bh) > 0 else 1
+        
+        M = cv2.moments(contour)
+        cx = int(M["m10"] / M["m00"]) if M["m00"] > 0 else bx + bw // 2
+        cy = int(M["m01"] / M["m00"]) if M["m00"] > 0 else by + bh // 2
+        
+        deposit = Deposit(
+            id=self.next_id, contour=contour,
+            x=bx, y=by, width=bw, height=bh,
+            area=area, perimeter=perimeter,
+            circularity=circularity, aspect_ratio=aspect_ratio,
+            centroid=(cx, cy)
+        )
+        self.next_id += 1
+        
+        self.deposits.append(deposit)
+        self.extractor.extract_features(self.image, [deposit])
+        self.viewer.add_deposit(deposit)
+        
+        self._update_table()
+        self._update_stats()
+        self.statusBar().showMessage(f"Added manual deposit {deposit.id}")
     
     def _delete_selected(self):
         deleted = []
@@ -1794,7 +1894,7 @@ class LabelingWindow(QMainWindow):
                 all_df.to_csv(all_deposits_path, index=False)
             
             # 4. Update film_summary.csv
-            summary_path = output_dir / 'film_summary.csv'
+            summary_path = output_dir / 'image_summary.csv'
             if summary_path.exists():
                 summary_df = pd.read_csv(summary_path)
                 

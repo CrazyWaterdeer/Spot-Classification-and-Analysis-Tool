@@ -1,6 +1,6 @@
 [project]
 name = "scat"
-version = "0.3.0"
+version = "0.5.0"
 description = "SCAT - Spot Classification and Analysis Tool for Drosophila excreta"
 readme = "README.md"
 license = {text = "MIT"}

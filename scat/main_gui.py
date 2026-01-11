@@ -5,6 +5,7 @@ Integrates labeling, training, analysis, and results viewing.
 
 import sys
 import os
+import subprocess
 from pathlib import Path
 from typing import Optional, Dict, List
 import numpy as np
@@ -19,7 +20,7 @@ from PySide6.QtWidgets import (
     QHeaderView, QSplitter, QLineEdit, QMessageBox, QScrollArea,
     QDialog, QKeySequenceEdit, QDialogButtonBox,
     QGraphicsView, QGraphicsScene, QGraphicsPathItem,
-    QListWidget, QMenu
+    QListWidget, QMenu, QRadioButton
 )
 from PySide6.QtCore import Qt, QThread, Signal, QSize, QRectF
 from PySide6.QtGui import (
@@ -2026,7 +2027,7 @@ class ResultsTab(QWidget):
         summary_text = f"""
         <h3>Summary</h3>
         {mode_text}
-        <p><b>Total Films:</b> {len(film_summary)}</p>
+        <p><b>Total Images:</b> {len(film_summary)}</p>
         <p><b>Total Deposits:</b> {film_summary['n_total'].sum():.0f}</p>
         <p><b>Normal:</b> {total_normal:.0f} | <b>ROD:</b> {total_rod:.0f} | <b>Artifact:</b> {total_artifact:.0f}</p>
         <p><b>Mean ROD Fraction:</b> {mean_rod_frac*100:.1f}% (±{film_summary['rod_fraction'].std()*100:.1f}%)</p>
@@ -2237,7 +2238,7 @@ class ResultsTab(QWidget):
             text += "</tr>"
         
         text += "</table>"
-        text += f"<p style='color: #B0B0B0; font-size: 11px;'>n = {len(film_summary)} films | CI = Confidence Interval | Normal? = Shapiro-Wilk p > 0.05</p>"
+        text += f"<p style='color: #B0B0B0; font-size: 11px;'>n = {len(film_summary)} images | CI = Confidence Interval | Normal? = Shapiro-Wilk p > 0.05</p>"
         
         return text
     
@@ -2404,7 +2405,7 @@ class ResultsTab(QWidget):
         output_dir = Path(self.results['output_dir'])
         
         # Reload film_summary
-        summary_path = output_dir / 'film_summary.csv'
+        summary_path = output_dir / 'image_summary.csv'
         if summary_path.exists():
             self.results['film_summary'] = pd.read_csv(summary_path)
         
@@ -2421,7 +2422,14 @@ class ResultsTab(QWidget):
     
     def _open_folder(self):
         if self.results and 'output_dir' in self.results:
-            os.startfile(self.results['output_dir'])
+            path = self.results['output_dir']
+            # Cross-platform folder opening
+            if sys.platform == 'win32':
+                os.startfile(path)
+            elif sys.platform == 'darwin':  # macOS
+                subprocess.run(['open', path])
+            else:  # Linux
+                subprocess.run(['xdg-open', path])
     
     def _generate_report(self):
         """Regenerate annotated images, statistics and report after editing."""
@@ -2439,15 +2447,17 @@ class ResultsTab(QWidget):
         try:
             import cv2
             
-            # Reload data from CSV files
-            summary_path = output_dir / 'film_summary.csv'
+            # Reload data from CSV files (support both new and old naming)
+            summary_path = output_dir / 'image_summary.csv'
+            if not summary_path.exists():
+                summary_path = output_dir / 'film_summary.csv'  # Backward compatibility
             all_deposits_path = output_dir / 'all_deposits.csv'
             
             if not summary_path.exists() or not all_deposits_path.exists():
                 QMessageBox.critical(self, "Error", "Required CSV files not found.")
                 return
             
-            film_summary = pd.read_csv(summary_path)
+            image_summary = pd.read_csv(summary_path)
             deposit_data = pd.read_csv(all_deposits_path)
             
             self.progress.setValue(10)
@@ -2460,7 +2470,7 @@ class ResultsTab(QWidget):
             
             colors = {'rod': (255, 0, 0), 'normal': (0, 255, 0), 'artifact': (128, 128, 128)}
             
-            for idx, row in film_summary.iterrows():
+            for idx, row in image_summary.iterrows():
                 filename = row['filename']
                 stem = Path(filename).stem
                 
@@ -2504,7 +2514,7 @@ class ResultsTab(QWidget):
                             result_bgr = cv2.cvtColor(result, cv2.COLOR_RGB2BGR)
                             cv2.imwrite(str(annotated_dir / f"{stem}_annotated.png"), result_bgr)
                 
-                self.progress.setValue(10 + int(40 * (idx + 1) / len(film_summary)))
+                self.progress.setValue(10 + int(40 * (idx + 1) / len(image_summary)))
                 QApplication.processEvents()
             
             # 2. Regenerate statistics and visualizations
@@ -2512,14 +2522,14 @@ class ResultsTab(QWidget):
             from .statistics import StatisticalAnalyzer
             
             viz_results = generate_all_visualizations(
-                film_summary, deposit_data, output_dir,
+                image_summary, deposit_data, output_dir,
                 group_by=self.results.get('group_by')
             )
             
             self.progress.setValue(70)
             QApplication.processEvents()
             
-            stats_analyzer = StatisticalAnalyzer(film_summary)
+            stats_analyzer = StatisticalAnalyzer(image_summary)
             stats_results = stats_analyzer.run_all_tests(
                 group_by=self.results.get('group_by')
             )
@@ -2531,7 +2541,7 @@ class ResultsTab(QWidget):
             from .report import ReportGenerator
             reporter = ReportGenerator(output_dir)
             reporter.generate(
-                film_summary, deposit_data, 
+                image_summary, deposit_data, 
                 stats_results, viz_results,
                 group_by=self.results.get('group_by')
             )
@@ -2539,7 +2549,7 @@ class ResultsTab(QWidget):
             self.progress.setValue(100)
             
             # Update results and refresh display
-            self.results['film_summary'] = film_summary
+            self.results['film_summary'] = image_summary  # Keep key for compatibility
             self.results['deposit_data'] = deposit_data
             self.results['viz_results'] = viz_results
             self.results['is_quick_mode'] = False  # Report generated, no longer quick mode
@@ -2574,17 +2584,19 @@ class ResultsTab(QWidget):
         
         output_dir = Path(folder)
         
-        # Check for required files
-        summary_path = output_dir / 'film_summary.csv'
+        # Check for required files (support both new and old naming)
+        summary_path = output_dir / 'image_summary.csv'
+        if not summary_path.exists():
+            summary_path = output_dir / 'film_summary.csv'  # Backward compatibility
         deposits_path = output_dir / 'all_deposits.csv'
         
         if not summary_path.exists():
-            QMessageBox.critical(self, "Error", "film_summary.csv not found in selected folder.")
+            QMessageBox.critical(self, "Error", "image_summary.csv not found in selected folder.")
             return
         
         try:
             # Load data
-            film_summary = pd.read_csv(summary_path)
+            image_summary = pd.read_csv(summary_path)
             deposit_data = pd.read_csv(deposits_path) if deposits_path.exists() else None
             
             # Load visualization results
@@ -2596,15 +2608,15 @@ class ResultsTab(QWidget):
             
             # Determine group_by from metadata if available
             group_by = None
-            if 'group' in film_summary.columns:
-                groups = film_summary['group'].dropna().unique()
+            if 'group' in image_summary.columns:
+                groups = image_summary['group'].dropna().unique()
                 if len(groups) > 1:
                     group_by = 'group'
             
             # Build results dictionary
             self.results = {
                 'output_dir': str(output_dir),
-                'film_summary': film_summary,
+                'film_summary': image_summary,  # Keep 'film_summary' key for compatibility
                 'deposit_data': deposit_data,
                 'viz_results': viz_results,
                 'group_by': group_by,
