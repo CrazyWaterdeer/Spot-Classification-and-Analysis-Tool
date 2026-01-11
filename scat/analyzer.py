@@ -437,7 +437,18 @@ class ReportGenerator:
                     group_df = deposit_data[deposit_data[group_col] == group_name].copy()
                     # Re-assign IDs within group
                     group_df['id'] = range(1, len(group_df) + 1)
-                    safe_name = str(group_name).replace(' ', '_').replace('/', '_')
+                    # Sanitize for Windows/cross-platform file names
+                    safe_name = str(group_name)
+                    # < > → +
+                    for char in ['<', '>']:
+                        safe_name = safe_name.replace(char, '+')
+                    # / \ | → -
+                    for char in ['/', '\\', '|']:
+                        safe_name = safe_name.replace(char, '-')
+                    # : * ? " → _
+                    for char in [':', '*', '?', '"']:
+                        safe_name = safe_name.replace(char, '_')
+                    safe_name = safe_name.replace(' ', '_')
                     group_df.to_csv(groups_dir / f'{safe_name}_deposits.csv', index=False)
         
         return {
