@@ -562,6 +562,66 @@ def analyze_groups(
     return analyzer.run_all_tests(film_summary, group_by=group_column, metrics=metrics)
 
 
+def generate_statistics_report(
+    film_summary: pd.DataFrame,
+    group_column: str,
+    metrics: List[str] = None
+) -> Dict:
+    """
+    Generate comprehensive statistics report for grouped data.
+    
+    Args:
+        film_summary: DataFrame with film-level summary
+        group_column: Column name for grouping (e.g., 'condition', 'group')
+        metrics: List of metric columns to analyze
+        
+    Returns:
+        Dict with statistical results
+    """
+    if metrics is None:
+        metrics = ['rod_fraction', 'n_total', 'n_rod', 'n_normal',
+                   'total_iod', 'normal_mean_area', 'rod_mean_area']
+    
+    analyzer = StatisticalAnalyzer()
+    results = {}
+    
+    # Get groups, excluding 'ungrouped'
+    groups = [g for g in film_summary[group_column].unique() 
+              if g != 'ungrouped' and pd.notna(g)]
+    
+    if len(groups) < 2:
+        return {}  # Not enough groups for comparison
+    
+    for metric in metrics:
+        if metric not in film_summary.columns:
+            continue
+        
+        group_data = {
+            g: film_summary[film_summary[group_column] == g][metric].dropna().values
+            for g in groups
+        }
+        
+        # Filter groups with insufficient data
+        group_data = {k: v for k, v in group_data.items() if len(v) >= 2}
+        
+        if len(group_data) < 2:
+            continue
+        
+        try:
+            if len(group_data) == 2:
+                names = list(group_data.keys())
+                results[metric] = analyzer.compare_two_groups(
+                    group_data[names[0]], group_data[names[1]],
+                    group1_name=names[0], group2_name=names[1]
+                )
+            else:
+                results[metric] = analyzer.compare_multiple_groups(group_data)
+        except Exception as e:
+            results[metric] = {'error': str(e)}
+    
+    return results
+
+
 class SpatialStatistics:
     """Statistical analysis for spatial data."""
     
