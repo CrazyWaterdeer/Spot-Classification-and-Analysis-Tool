@@ -1149,23 +1149,26 @@ class GroupCard(QFrame):
         self.file_list = []
         
         self.setAcceptDrops(True)
+        self.setMinimumHeight(44)
         self.setFrameShape(QFrame.StyledPanel)
-        self.setObjectName("groupCard")
         self._update_style(False)
+        self.setCursor(Qt.PointingHandCursor)
         
         layout = QHBoxLayout(self)
         layout.setContentsMargins(12, 10, 12, 10)
         
-        # Expand indicator + Group name + count
+        # Expand indicator
         self.expand_label = QLabel("▶")
         self.expand_label.setFixedWidth(16)
         self.expand_label.setStyleSheet(f"color: {Theme.TEXT_SECONDARY};")
         layout.addWidget(self.expand_label)
         
-        self.name_label = QLabel(f"{group_name}")
+        # Group name
+        self.name_label = QLabel(group_name)
         self.name_label.setStyleSheet(f"color: {Theme.TEXT}; font-weight: bold;")
         layout.addWidget(self.name_label)
         
+        # Count
         self.count_label = QLabel(f"({file_count} files)")
         self.count_label.setStyleSheet(f"color: {Theme.TEXT_SECONDARY};")
         layout.addWidget(self.count_label)
@@ -1175,6 +1178,7 @@ class GroupCard(QFrame):
         # Delete button
         delete_btn = QPushButton("✕")
         delete_btn.setFixedSize(24, 24)
+        delete_btn.setCursor(Qt.ArrowCursor)
         delete_btn.setStyleSheet(f"""
             QPushButton {{
                 background: transparent;
@@ -1192,7 +1196,7 @@ class GroupCard(QFrame):
     def _update_style(self, hover: bool):
         if hover:
             self.setStyleSheet(f"""
-                QFrame#groupCard {{
+                GroupCard {{
                     background-color: {Theme.SURFACE};
                     border: 2px solid {Theme.PRIMARY};
                     border-radius: 8px;
@@ -1200,13 +1204,10 @@ class GroupCard(QFrame):
             """)
         else:
             self.setStyleSheet(f"""
-                QFrame#groupCard {{
+                GroupCard {{
                     background-color: {Theme.SURFACE};
                     border: 1px solid {Theme.BORDER};
                     border-radius: 8px;
-                }}
-                QFrame#groupCard:hover {{
-                    border-color: {Theme.TEXT_SECONDARY};
                 }}
             """)
     
@@ -1409,7 +1410,7 @@ class GroupEditorDialog(QDialog):
         # Create new cards
         for group_name in sorted(self.groups.keys()):
             files = self.groups[group_name]
-            card = GroupCard(group_name, len(files))
+            card = GroupCard(group_name, len(files), self.scroll_content)
             card.clicked.connect(self._on_card_clicked)
             card.deleteRequested.connect(self._remove_group)
             card.filesDropped.connect(self._on_files_dropped)
@@ -1419,10 +1420,14 @@ class GroupEditorDialog(QDialog):
             )
             
             self.groups_layout.addWidget(card)
+            card.show()  # Explicitly show the card
             self.group_cards[group_name] = card
         
         # Add stretch at end
         self.groups_layout.addStretch()
+        
+        # Force layout update
+        self.scroll_content.updateGeometry()
     
     def _on_card_clicked(self, group_name: str):
         """Toggle expansion of a group card."""
