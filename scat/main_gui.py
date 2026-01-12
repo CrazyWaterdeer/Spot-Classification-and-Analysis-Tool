@@ -1135,6 +1135,7 @@ class TrainingTab(QWidget):
         QMessageBox.critical(self, "Error", f"Training failed:\n{error_msg}")
 
 
+<<<<<<< HEAD
 
 class GroupCard(QPushButton):
     """Card-style group button with expand/collapse functionality."""
@@ -1258,12 +1259,167 @@ class GroupEditorDialog(QDialog):
     
     def __init__(self, file_list: List[str], parent=None, existing_groups: Dict[str, List[str]] = None):
         print("[DEBUG] GroupEditorDialog.__init__ START")
+=======
+class GroupCard(QFrame):
+    """Compact group card with rounded corners."""
+    clicked = Signal(str)  # group_name
+    deleteRequested = Signal(str)  # group_name
+    filesDropped = Signal(str, list)  # group_name, filenames
+    
+    def __init__(self, group_name: str, file_count: int, parent=None):
+        super().__init__(parent)
+        self.group_name = group_name
+        self.file_count = file_count
+        self.expanded = False
+        self.file_list = []
+        
+        self.setAcceptDrops(True)
+        self.setMinimumHeight(44)
+        self.setFrameShape(QFrame.StyledPanel)
+        self._update_style(False)
+        self.setCursor(Qt.PointingHandCursor)
+        
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(12, 10, 12, 10)
+        
+        # Expand indicator
+        self.expand_label = QLabel("▶")
+        self.expand_label.setFixedWidth(16)
+        self.expand_label.setStyleSheet(f"color: {Theme.TEXT_SECONDARY};")
+        layout.addWidget(self.expand_label)
+        
+        # Group name
+        self.name_label = QLabel(group_name)
+        self.name_label.setStyleSheet(f"color: {Theme.TEXT}; font-weight: bold;")
+        layout.addWidget(self.name_label)
+        
+        # Count
+        self.count_label = QLabel(f"({file_count} files)")
+        self.count_label.setStyleSheet(f"color: {Theme.TEXT_SECONDARY};")
+        layout.addWidget(self.count_label)
+        
+        layout.addStretch()
+        
+        # Delete button
+        delete_btn = QPushButton("✕")
+        delete_btn.setFixedSize(24, 24)
+        delete_btn.setCursor(Qt.ArrowCursor)
+        delete_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent;
+                color: {Theme.TEXT_SECONDARY};
+                border: none;
+                font-size: 14px;
+            }}
+            QPushButton:hover {{
+                color: {Theme.PRIMARY};
+            }}
+        """)
+        delete_btn.clicked.connect(lambda: self.deleteRequested.emit(self.group_name))
+        layout.addWidget(delete_btn)
+    
+    def _update_style(self, hover: bool):
+        if hover:
+            self.setStyleSheet(f"""
+                GroupCard {{
+                    background-color: {Theme.SURFACE};
+                    border: 2px solid {Theme.PRIMARY};
+                    border-radius: 8px;
+                }}
+            """)
+        else:
+            self.setStyleSheet(f"""
+                GroupCard {{
+                    background-color: {Theme.SURFACE};
+                    border: 1px solid {Theme.BORDER};
+                    border-radius: 8px;
+                }}
+            """)
+    
+    def update_count(self, count: int):
+        self.file_count = count
+        self.count_label.setText(f"({count} files)")
+    
+    def update_name(self, new_name: str):
+        self.group_name = new_name
+        self.name_label.setText(new_name)
+    
+    def set_expanded(self, expanded: bool):
+        self.expanded = expanded
+        self.expand_label.setText("▼" if expanded else "▶")
+    
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit(self.group_name)
+        super().mousePressEvent(event)
+    
+    def dragEnterEvent(self, event):
+        if event.source():
+            event.acceptProposedAction()
+            self._update_style(True)
+        else:
+            event.ignore()
+    
+    def dragLeaveEvent(self, event):
+        self._update_style(False)
+    
+    def dropEvent(self, event):
+        source = event.source()
+        if source and hasattr(source, 'selectedItems'):
+            filenames = [item.text() for item in source.selectedItems()]
+            if filenames:
+                self.filesDropped.emit(self.group_name, filenames)
+                event.acceptProposedAction()
+        self._update_style(False)
+
+
+class DroppableScrollArea(QScrollArea):
+    """Scroll area that accepts drops on empty space to create new groups."""
+    newGroupRequested = Signal(list)
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAcceptDrops(True)
+    
+    def dragEnterEvent(self, event):
+        if event.source():
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+    
+    def dragMoveEvent(self, event):
+        if event.source():
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+    
+    def dropEvent(self, event):
+        # Check if dropped directly on scroll area (not on a card)
+        source = event.source()
+        if source and hasattr(source, 'selectedItems'):
+            filenames = [item.text() for item in source.selectedItems()]
+            if filenames:
+                self.newGroupRequested.emit(filenames)
+                event.acceptProposedAction()
+                return
+        event.ignore()
+
+
+class GroupEditorDialog(QDialog):
+    """Dialog for grouping files into conditions with drag & drop."""
+    
+    def __init__(self, file_list: List[str], parent=None, existing_groups: Dict[str, List[str]] = None):
+>>>>>>> 976f13012b0872fb9ed6e1677bd04bb79191446d
         super().__init__(parent)
         self.file_list = file_list
         self.groups: Dict[str, List[str]] = existing_groups.copy() if existing_groups else {}
         self.metadata_df = None
         self.group_cards: Dict[str, GroupCard] = {}
+<<<<<<< HEAD
         self.expanded_group: Optional[str] = None
+=======
+        self.expanded_group = None  # Currently expanded group
+>>>>>>> 976f13012b0872fb9ed6e1677bd04bb79191446d
         
         self.setWindowTitle("Group Editor")
         self.setMinimumSize(750, 550)
@@ -1272,9 +1428,13 @@ class GroupEditorDialog(QDialog):
         self._setup_ui()
         print("[DEBUG] Calling _populate_files")
         self._populate_files()
+<<<<<<< HEAD
         print("[DEBUG] Calling _rebuild_cards")
         self._rebuild_cards()
         print("[DEBUG] GroupEditorDialog.__init__ END")
+=======
+        self._rebuild_group_cards()
+>>>>>>> 976f13012b0872fb9ed6e1677bd04bb79191446d
     
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -1308,6 +1468,7 @@ class GroupEditorDialog(QDialog):
         group_btn_layout.addStretch()
         right_layout.addLayout(group_btn_layout)
         
+<<<<<<< HEAD
         # Groups scroll area with droppable container
         self.groups_scroll = QScrollArea()
         self.groups_scroll.setWidgetResizable(True)
@@ -1319,10 +1480,24 @@ class GroupEditorDialog(QDialog):
         self.groups_layout.setSpacing(6)
         self.groups_layout.setContentsMargins(4, 4, 4, 4)
         self.groups_layout.addStretch()
+=======
+        # Groups scroll area (drop on empty creates new group)
+        self.groups_scroll = DroppableScrollArea()
+        self.groups_scroll.setWidgetResizable(True)
+        self.groups_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.groups_scroll.newGroupRequested.connect(self._create_group_from_drop)
+        
+        self.scroll_content = QWidget()
+        self.groups_layout = QVBoxLayout(self.scroll_content)
+        self.groups_layout.setSpacing(8)
+        self.groups_layout.setContentsMargins(4, 4, 4, 4)
+        # stretch will be added by _rebuild_group_cards
+>>>>>>> 976f13012b0872fb9ed6e1677bd04bb79191446d
         
         self.groups_scroll.setWidget(self.scroll_content)
         right_layout.addWidget(self.groups_scroll)
         
+<<<<<<< HEAD
         # Expanded file list (fixed at bottom, outside scroll)
         self.expanded_list = QListWidget()
         self.expanded_list.setMaximumHeight(150)
@@ -1333,6 +1508,19 @@ class GroupEditorDialog(QDialog):
         right_layout.addWidget(self.expanded_list)
         
         splitter.addWidget(right_widget)
+=======
+        # File list for expanded group (outside scroll, fixed at bottom)
+        self.expanded_file_list = QListWidget()
+        self.expanded_file_list.setMaximumHeight(120)
+        self.expanded_file_list.setVisible(False)
+        self.expanded_file_list.setSelectionMode(QListWidget.ExtendedSelection)
+        self.expanded_file_list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.expanded_file_list.customContextMenuRequested.connect(self._show_expanded_context_menu)
+        right_layout.addWidget(self.expanded_file_list)
+        
+        splitter.addWidget(right_widget)
+        splitter.setSizes([350, 400])
+>>>>>>> 976f13012b0872fb9ed6e1677bd04bb79191446d
         
         layout.addWidget(splitter)
         
@@ -1368,16 +1556,24 @@ class GroupEditorDialog(QDialog):
         for f in self.file_list:
             self.file_list_widget.addItem(Path(f).name)
     
+<<<<<<< HEAD
     def _rebuild_cards(self):
         """Rebuild all group cards."""
         print(f"[DEBUG] _rebuild_cards START, groups={list(self.groups.keys())}")
         # Clear existing cards
         while self.groups_layout.count() > 1:  # Keep stretch
+=======
+    def _rebuild_group_cards(self):
+        """Rebuild all group cards."""
+        # Remove ALL widgets from layout
+        while self.groups_layout.count():
+>>>>>>> 976f13012b0872fb9ed6e1677bd04bb79191446d
             item = self.groups_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
         
         self.group_cards.clear()
+<<<<<<< HEAD
         self.expanded_group = None
         self.expanded_list.setVisible(False)
         self.expanded_list.clear()
@@ -1415,6 +1611,43 @@ class GroupEditorDialog(QDialog):
             self.expanded_group = None
             self.expanded_list.setVisible(False)
             self.expanded_list.clear()
+=======
+        
+        # Hide expanded list
+        self.expanded_group = None
+        self.expanded_file_list.setVisible(False)
+        self.expanded_file_list.clear()
+        
+        # Create new cards
+        for group_name in sorted(self.groups.keys()):
+            files = self.groups[group_name]
+            card = GroupCard(group_name, len(files), self.scroll_content)
+            card.clicked.connect(self._on_card_clicked)
+            card.deleteRequested.connect(self._remove_group)
+            card.filesDropped.connect(self._on_files_dropped)
+            card.setContextMenuPolicy(Qt.CustomContextMenu)
+            card.customContextMenuRequested.connect(
+                lambda pos, n=group_name: self._show_card_context_menu(pos, n)
+            )
+            
+            self.groups_layout.addWidget(card)
+            card.show()  # Explicitly show the card
+            self.group_cards[group_name] = card
+        
+        # Add stretch at end
+        self.groups_layout.addStretch()
+        
+        # Force layout update
+        self.scroll_content.updateGeometry()
+    
+    def _on_card_clicked(self, group_name: str):
+        """Toggle expansion of a group card."""
+        if self.expanded_group == group_name:
+            # Collapse
+            self.expanded_group = None
+            self.expanded_file_list.setVisible(False)
+            self.expanded_file_list.clear()
+>>>>>>> 976f13012b0872fb9ed6e1677bd04bb79191446d
             if group_name in self.group_cards:
                 self.group_cards[group_name].set_expanded(False)
         else:
@@ -1424,13 +1657,20 @@ class GroupEditorDialog(QDialog):
             
             # Expand new
             self.expanded_group = group_name
+<<<<<<< HEAD
             self.expanded_list.clear()
             for f in sorted(self.groups.get(group_name, [])):
                 self.expanded_list.addItem(f)
+=======
+            self.expanded_file_list.clear()
+            for f in sorted(self.groups.get(group_name, [])):
+                self.expanded_file_list.addItem(f)
+>>>>>>> 976f13012b0872fb9ed6e1677bd04bb79191446d
             
             if group_name in self.group_cards:
                 self.group_cards[group_name].set_expanded(True)
             
+<<<<<<< HEAD
             self.expanded_list.setVisible(True)
     
     def _on_files_dropped(self, group_name: str, filenames: List[str]):
@@ -1466,6 +1706,9 @@ class GroupEditorDialog(QDialog):
             print(f"[DEBUG] Group '{name}' added to self.groups, calling _create_card")
             self._create_card(name)
             print(f"[DEBUG] _create_card returned, group_cards={list(self.group_cards.keys())}")
+=======
+            self.expanded_file_list.setVisible(True)
+>>>>>>> 976f13012b0872fb9ed6e1677bd04bb79191446d
     
     def _show_file_context_menu(self, pos):
         menu = QMenu(self)
@@ -1497,17 +1740,49 @@ class GroupEditorDialog(QDialog):
             menu.exec(card.mapToGlobal(pos))
     
     def _show_expanded_context_menu(self, pos):
+<<<<<<< HEAD
         if not self.expanded_group:
             return
         
         selected = self.expanded_list.selectedItems()
+=======
+        """Context menu for expanded file list."""
+        if not self.expanded_group:
+            return
+        
+        selected = self.expanded_file_list.selectedItems()
+>>>>>>> 976f13012b0872fb9ed6e1677bd04bb79191446d
         if not selected:
             return
         
         menu = QMenu(self)
         remove_action = menu.addAction("Remove from group")
         remove_action.triggered.connect(self._remove_selected_from_group)
+<<<<<<< HEAD
         menu.exec(self.expanded_list.mapToGlobal(pos))
+=======
+        menu.exec(self.expanded_file_list.mapToGlobal(pos))
+    
+    def _remove_selected_from_group(self):
+        """Remove selected files from the expanded group."""
+        if not self.expanded_group:
+            return
+        
+        selected = self.expanded_file_list.selectedItems()
+        for item in selected:
+            filename = item.text()
+            if filename in self.groups[self.expanded_group]:
+                self.groups[self.expanded_group].remove(filename)
+        
+        # Refresh
+        self.expanded_file_list.clear()
+        for f in sorted(self.groups.get(self.expanded_group, [])):
+            self.expanded_file_list.addItem(f)
+        
+        # Update card count
+        if self.expanded_group in self.group_cards:
+            self.group_cards[self.expanded_group].update_count(len(self.groups[self.expanded_group]))
+>>>>>>> 976f13012b0872fb9ed6e1677bd04bb79191446d
     
     def _add_group(self):
         from PySide6.QtWidgets import QInputDialog
@@ -1517,6 +1792,7 @@ class GroupEditorDialog(QDialog):
                 QMessageBox.warning(self, "Duplicate", f"Group '{name}' already exists.")
                 return
             self.groups[name] = []
+<<<<<<< HEAD
             # Auto-add selected files
             for item in self.file_list_widget.selectedItems():
                 filename = item.text()
@@ -1590,6 +1866,78 @@ class GroupEditorDialog(QDialog):
         # Update card count
         if self.expanded_group in self.group_cards:
             self.group_cards[self.expanded_group].update_count(len(self.groups[self.expanded_group]))
+=======
+            selected = self.file_list_widget.selectedItems()
+            for item in selected:
+                filename = item.text()
+                if filename not in self.groups[name]:
+                    self.groups[name].append(filename)
+            self._rebuild_group_cards()
+    
+    def _create_group_from_drop(self, filenames: List[str]):
+        from PySide6.QtWidgets import QInputDialog
+        name, ok = QInputDialog.getText(self, "New Group", "Group name:")
+        if ok and name:
+            if name in self.groups:
+                QMessageBox.warning(self, "Duplicate", f"Group '{name}' already exists.")
+                return
+            self.groups[name] = list(filenames)
+            self._rebuild_group_cards()
+    
+    def _rename_group(self, old_name: str):
+        from PySide6.QtWidgets import QInputDialog
+        new_name, ok = QInputDialog.getText(self, "Rename Group", "New name:", text=old_name)
+        if ok and new_name and new_name != old_name:
+            if new_name in self.groups:
+                QMessageBox.warning(self, "Duplicate", f"Group '{new_name}' already exists.")
+                return
+            self.groups[new_name] = self.groups.pop(old_name)
+            if self.expanded_group == old_name:
+                self.expanded_group = new_name
+            self._rebuild_group_cards()
+    
+    def _remove_group(self, group_name: str):
+        if group_name in self.groups:
+            del self.groups[group_name]
+        if self.expanded_group == group_name:
+            self.expanded_group = None
+            self.expanded_file_list.setVisible(False)
+        self._rebuild_group_cards()
+    
+    def _on_files_dropped(self, group_name: str, filenames: List[str]):
+        if group_name not in self.groups:
+            return
+        for filename in filenames:
+            if filename not in self.groups[group_name]:
+                self.groups[group_name].append(filename)
+        
+        # Update card
+        if group_name in self.group_cards:
+            self.group_cards[group_name].update_count(len(self.groups[group_name]))
+        
+        # Update expanded list if this group is expanded
+        if self.expanded_group == group_name:
+            self.expanded_file_list.clear()
+            for f in sorted(self.groups[group_name]):
+                self.expanded_file_list.addItem(f)
+    
+    def _add_selected_to_group(self, group_name: str):
+        selected = self.file_list_widget.selectedItems()
+        if not selected:
+            return
+        for item in selected:
+            filename = item.text()
+            if filename not in self.groups[group_name]:
+                self.groups[group_name].append(filename)
+        
+        if group_name in self.group_cards:
+            self.group_cards[group_name].update_count(len(self.groups[group_name]))
+        
+        if self.expanded_group == group_name:
+            self.expanded_file_list.clear()
+            for f in sorted(self.groups[group_name]):
+                self.expanded_file_list.addItem(f)
+>>>>>>> 976f13012b0872fb9ed6e1677bd04bb79191446d
     
     def _generate_metadata(self) -> pd.DataFrame:
         column_name = self.column_name_edit.text() or "condition"
@@ -1957,6 +2305,7 @@ class AnalysisTab(QWidget):
         
         # Pass existing groups if any
         existing_groups = getattr(self, '_group_data', None)
+<<<<<<< HEAD
         print(f"[DEBUG] Existing groups: {existing_groups}")
         
         print("[DEBUG] Creating GroupEditorDialog...")
@@ -1989,6 +2338,29 @@ class AnalysisTab(QWidget):
             print(f"[DEBUG] EXCEPTION in _open_group_editor: {e}")
             import traceback
             traceback.print_exc()
+=======
+        
+        dialog = GroupEditorDialog(file_paths, self, existing_groups)
+        if dialog.exec():
+            metadata = dialog.get_metadata()
+            if metadata is not None and len(metadata) > 0:
+                # Store metadata in memory
+                self._metadata = metadata
+                
+                # Build group data for the list
+                group_col = metadata.columns[1]  # Second column is the group
+                group_data = {}
+                for group_name in metadata[group_col].unique():
+                    if group_name != 'ungrouped':
+                        files = metadata[metadata[group_col] == group_name]['filename'].tolist()
+                        group_data[group_name] = files
+                
+                # Update internal storage
+                self._group_data = group_data
+                
+                # Update the groups tree
+                self._update_groups_list(group_data)
+>>>>>>> 976f13012b0872fb9ed6e1677bd04bb79191446d
     
     def _run_analysis(self):
         input_dir = self.input_dir.path()
