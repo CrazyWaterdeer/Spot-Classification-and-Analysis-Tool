@@ -255,7 +255,7 @@ class Analyzer:
             if skip_artifacts and d.label == 'artifact':
                 continue
             color = colors.get(d.label, colors['unknown'])
-            cv2.drawContours(result, [d.contour], -1, color, 2)
+            cv2.drawContours(result, [d.contour], -1, color, 1)
             if show_labels:
                 cv2.putText(result, f"{d.id}", (d.centroid[0] + 5, d.centroid[1] - 5),
                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)

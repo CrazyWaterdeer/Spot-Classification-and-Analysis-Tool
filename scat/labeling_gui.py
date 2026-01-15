@@ -235,9 +235,9 @@ class DepositGraphicsItem(QGraphicsPathItem):
     def _update_appearance(self):
         color = self.COLORS.get(self.deposit.label, self.COLORS['unknown'])
         
-        # Line width: 0.6 when selected, 0.3 when not
+        # Line width: 0.8 when selected, 0.4 when not
         # Alpha: 30 when selected, 10 when not
-        line_width = 0.6 if self.selected else 0.3
+        line_width = 0.8 if self.selected else 0.4
         alpha = 30 if self.selected else 10
         
         # If grouped, use dashed line with group color
@@ -331,6 +331,34 @@ class ImageViewer(QGraphicsView):
         self.manual_points = []  # For manual mode
         self.manual_path_item = None
         self.selection_rect = None  # For box selection
+        
+        # Space bar temporary pan mode
+        self._space_pressed = False
+        self._mode_before_space = None
+        self.setFocusPolicy(Qt.StrongFocus)  # Enable key events
+    
+    def keyPressEvent(self, event):
+        """Handle key press - Space for temporary pan mode."""
+        if event.key() == Qt.Key_Space and not event.isAutoRepeat():
+            if self.edit_mode != self.MODE_PAN and not self._space_pressed:
+                self._space_pressed = True
+                self._mode_before_space = self.edit_mode
+                self.setDragMode(QGraphicsView.ScrollHandDrag)
+        else:
+            super().keyPressEvent(event)
+    
+    def keyReleaseEvent(self, event):
+        """Handle key release - restore mode after Space."""
+        if event.key() == Qt.Key_Space and not event.isAutoRepeat():
+            if self._space_pressed and self._mode_before_space is not None:
+                self._space_pressed = False
+                if self._mode_before_space == self.MODE_PAN:
+                    self.setDragMode(QGraphicsView.ScrollHandDrag)
+                else:
+                    self.setDragMode(QGraphicsView.NoDrag)
+                self._mode_before_space = None
+        else:
+            super().keyReleaseEvent(event)
     
     def set_mode(self, mode: int):
         self.edit_mode = mode
@@ -561,7 +589,7 @@ class ImageViewer(QGraphicsView):
             path.lineTo(point)
         
         self.freeform_path_item = self.scene.addPath(
-            path, QPen(QColor(0, 0, 255), 2, Qt.DashLine)
+            path, QPen(QColor(0, 0, 255), 0.3, Qt.DashLine)
         )
     
     def _clear_freeform(self):
@@ -586,7 +614,7 @@ class ImageViewer(QGraphicsView):
         
         # Use a different color (green) to distinguish from freeform
         self.manual_path_item = self.scene.addPath(
-            path, QPen(QColor(0, 200, 0), 2, Qt.DashLine)
+            path, QPen(QColor(0, 200, 0), 0.3, Qt.DashLine)
         )
     
     def _clear_manual(self):
@@ -1574,9 +1602,18 @@ class LabelingWindow(QMainWindow):
                     break
     
     def _save_labels(self):
+        """Save labels - if path exists, overwrite; otherwise ask for path."""
         if not self.current_file:
             return
-        # Use last label directory, fallback to image directory
+        
+        # If we have a saved path, just save there (overwrite)
+        if self._last_saved_path and self._last_saved_path.exists():
+            self._save_to_path(self._last_saved_path)
+            self._has_unsaved_changes = False
+            self.statusBar().showMessage(f"Saved to {self._last_saved_path}")
+            return
+        
+        # Otherwise, ask for save location (Save As)
         start_dir = config.get("last_label_dir", "")
         if not start_dir:
             start_dir = str(self.current_file.parent)
@@ -1817,7 +1854,7 @@ class LabelingWindow(QMainWindow):
     def _save_edit_changes(self):
         """Save changes in EDIT_MODE (updates CSV + JSON + film_summary)."""
         if not self._has_unsaved_changes:
-            self.close()
+            self.statusBar().showMessage("No changes to save")
             return
         
         import pandas as pd
@@ -1917,7 +1954,6 @@ class LabelingWindow(QMainWindow):
             self._has_unsaved_changes = False
             self.data_saved.emit()  # Notify parent to refresh
             self.statusBar().showMessage("Changes saved successfully!")
-            self.close()
             
         except Exception as e:
             from PySide6.QtWidgets import QMessageBox

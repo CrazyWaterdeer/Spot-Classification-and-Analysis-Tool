@@ -2843,14 +2843,22 @@ class ResultsTab(QWidget):
                                     continue
                                 
                                 contour = np.array(d['contour'])
+                                # Handle different contour shapes: (N,2), (N,1,2), etc.
+                                if contour.ndim == 3:
+                                    contour = contour.reshape(-1, 2)
+                                elif contour.ndim == 1:
+                                    # Flat array - try to reshape
+                                    contour = contour.reshape(-1, 2)
+                                
                                 color = colors.get(label, (255, 255, 0))
-                                cv2.drawContours(result, [contour], -1, color, 2)
+                                cv2.drawContours(result, [contour.astype(np.int32)], -1, color, 1)
                                 
                                 # Draw ID
-                                cx = int(np.mean(contour[:, 0]))
-                                cy = int(np.mean(contour[:, 1]))
-                                cv2.putText(result, str(d['id']), (cx + 5, cy - 5),
-                                           cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
+                                if len(contour) > 0 and contour.shape[1] >= 2:
+                                    cx = int(np.mean(contour[:, 0]))
+                                    cy = int(np.mean(contour[:, 1]))
+                                    cv2.putText(result, str(d['id']), (cx + 5, cy - 5),
+                                               cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
                             
                             result_bgr = cv2.cvtColor(result, cv2.COLOR_RGB2BGR)
                             cv2.imwrite(str(annotated_dir / f"{stem}_annotated.png"), result_bgr)
