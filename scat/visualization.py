@@ -409,7 +409,7 @@ class Visualizer:
             film_summary: DataFrame with film-level data
             metric: Column to plot (e.g., 'rod_fraction')
             group_by: Column for grouping
-            control_group: Name of control group (shown in gray)
+            control_group: Name of control group (shown in gray for color only)
             show_significance: Whether to show statistical significance
             title: Plot title
             filename: Output filename
@@ -440,10 +440,10 @@ class Visualizer:
             ax=ax, color='#333333', alpha=0.6, size=4, jitter=True
         )
         
-        # Statistical significance (basic implementation)
-        if show_significance and control_group and control_group in unique_groups:
+        # Statistical significance - compare adjacent groups
+        if show_significance and len(unique_groups) >= 2:
             self._add_significance_annotations(
-                ax, film_summary, metric, group_by, unique_groups, control_group
+                ax, film_summary, metric, group_by, unique_groups
             )
         
         metric_label = get_feature_label(metric)
@@ -461,32 +461,50 @@ class Visualizer:
     
     def _add_significance_annotations(
         self, ax, data: pd.DataFrame, metric: str, group_by: str,
-        groups: List[str], control_group: str
+        groups: List[str], max_pairs: int = 6
     ):
-        """Add statistical significance annotations (*, **, ***, ns)."""
+        """
+        Add statistical significance annotations (*, **, ***, ns).
+        Compares adjacent groups with bracket notation.
+        
+        Args:
+            ax: Matplotlib axes
+            data: DataFrame with data
+            metric: Column to compare
+            group_by: Grouping column
+            groups: List of group names in order
+            max_pairs: Maximum number of comparisons to show
+        """
         from scipy import stats
         
-        control_data = data[data[group_by] == control_group][metric].dropna()
-        if len(control_data) < 2:
+        if len(groups) < 2:
             return
         
         y_max = data[metric].max()
         y_range = data[metric].max() - data[metric].min()
-        y_offset = y_range * 0.05
+        if y_range == 0:
+            y_range = y_max * 0.1 if y_max > 0 else 1
         
-        control_idx = groups.index(control_group)
+        # Compare adjacent groups
+        pairs = [(i, i+1) for i in range(len(groups) - 1)]
         
-        for i, group in enumerate(groups):
-            if group == control_group:
-                continue
+        # Limit number of comparisons
+        if len(pairs) > max_pairs:
+            pairs = pairs[:max_pairs]
+        
+        annotations = []
+        for idx1, idx2 in pairs:
+            group1, group2 = groups[idx1], groups[idx2]
             
-            group_data = data[data[group_by] == group][metric].dropna()
-            if len(group_data) < 2:
+            data1 = data[data[group_by] == group1][metric].dropna()
+            data2 = data[data[group_by] == group2][metric].dropna()
+            
+            if len(data1) < 2 or len(data2) < 2:
                 continue
             
             # Mann-Whitney U test
             try:
-                _, p_value = stats.mannwhitneyu(control_data, group_data, alternative='two-sided')
+                _, p_value = stats.mannwhitneyu(data1, data2, alternative='two-sided')
             except:
                 continue
             
@@ -502,11 +520,29 @@ class Visualizer:
             else:
                 sig_text = '****'
             
-            # Draw bracket and text
-            y_bar = y_max + y_offset * (abs(i - control_idx) + 1)
+            annotations.append((idx1, idx2, sig_text, p_value))
+        
+        # Draw brackets and annotations
+        bracket_height = y_range * 0.03
+        y_offset = y_range * 0.08
+        
+        for level, (idx1, idx2, sig_text, p_value) in enumerate(annotations):
+            y_bar = y_max + y_offset * (level + 1)
             
-            # Simple text annotation above each group
-            ax.text(i, y_bar, sig_text, ha='center', va='bottom', fontsize=10, fontweight='bold')
+            # Draw bracket
+            ax.plot([idx1, idx1, idx2, idx2], 
+                   [y_bar - bracket_height, y_bar, y_bar, y_bar - bracket_height],
+                   color='black', linewidth=1)
+            
+            # Add significance text
+            x_mid = (idx1 + idx2) / 2
+            ax.text(x_mid, y_bar + bracket_height * 0.5, sig_text, 
+                   ha='center', va='bottom', fontsize=9, fontweight='bold')
+        
+        # Adjust y-axis limit to accommodate annotations
+        if annotations:
+            new_ylim = y_max + y_offset * (len(annotations) + 1)
+            ax.set_ylim(top=new_ylim)
     
     def box_comparison(
         self,
@@ -880,7 +916,8 @@ def generate_all_visualizations(
     deposits_df: pd.DataFrame,
     output_dir: Path,
     group_by: str = None,
-    control_group: str = None
+    control_group: str = None,
+    show_significance: bool = True
 ) -> Dict[str, str]:
     """
     Generate all available visualizations.
@@ -891,6 +928,7 @@ def generate_all_visualizations(
         output_dir: Output directory for figures
         group_by: Column for grouping
         control_group: Name of control group (shown in gray)
+        show_significance: Whether to show statistical significance on violin plots
     
     Returns:
         Dict mapping visualization name to filepath
@@ -918,7 +956,8 @@ def generate_all_visualizations(
         if metric in film_summary.columns and group_by:
             path = viz.violin_comparison(
                 film_summary, metric, group_by, 
-                control_group=control_group
+                control_group=control_group,
+                show_significance=show_significance
             )
             if path:
                 results[f'violin_{metric}'] = path

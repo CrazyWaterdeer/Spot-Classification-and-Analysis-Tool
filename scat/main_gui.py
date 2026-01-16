@@ -2878,8 +2878,9 @@ class ResultsTab(QWidget):
             self.progress.setValue(70)
             QApplication.processEvents()
             
-            stats_analyzer = StatisticalAnalyzer(image_summary)
+            stats_analyzer = StatisticalAnalyzer()
             stats_results = stats_analyzer.run_all_tests(
+                film_summary=image_summary,
                 group_by=self.results.get('group_by')
             )
             
