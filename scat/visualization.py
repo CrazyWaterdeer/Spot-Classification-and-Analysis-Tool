@@ -1,13 +1,48 @@
 """
 Visualization module for SCAT.
 Provides PCA, clustering, density plots, and comparison charts.
+Publication-ready figures with GraphPad Prism-like styling.
 """
 
 import numpy as np
 import pandas as pd
 from pathlib import Path
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional, Tuple, Union
 import warnings
+
+# =============================================================================
+# Color Palettes
+# =============================================================================
+
+# Default gray for ungrouped data (matches UI Theme.SECONDARY)
+DEFAULT_GRAY = '#636867'
+
+# Pastel palette for experiments (lighter, publication-friendly)
+PASTEL_PALETTE = [
+    '#a8d5ba',  # Light green
+    '#f7b8b8',  # Light coral/pink
+    '#b8d4e3',  # Light blue
+    '#f5e6ab',  # Light yellow
+    '#d4b8e3',  # Light purple
+    '#ffd4a8',  # Light orange
+    '#b8e3d4',  # Light teal
+    '#e3b8d4',  # Light magenta
+]
+
+# Control group color (neutral gray)
+CONTROL_COLOR = '#9E9E9E'
+
+# Colors for deposit types
+DEPOSIT_COLORS = {
+    'normal': '#4CAF50',
+    'rod': '#F44336', 
+    'artifact': '#9E9E9E',
+    'unknown': '#FFC107'
+}
+
+# =============================================================================
+# Feature Labels
+# =============================================================================
 
 # Feature label mapping for proper display
 FEATURE_LABELS = {
@@ -55,6 +90,47 @@ FEATURE_LABELS = {
 def get_feature_label(feature: str) -> str:
     """Get display label for a feature name."""
     return FEATURE_LABELS.get(feature, feature.replace('_', ' ').title())
+
+
+def get_palette(groups: List[str], control_group: str = None) -> Dict[str, str]:
+    """
+    Get color palette for groups.
+    
+    Args:
+        groups: List of group names
+        control_group: Name of control group (will be gray)
+    
+    Returns:
+        Dict mapping group names to colors
+    """
+    palette = {}
+    color_idx = 0
+    
+    for group in groups:
+        if control_group and group == control_group:
+            palette[group] = CONTROL_COLOR
+        else:
+            palette[group] = PASTEL_PALETTE[color_idx % len(PASTEL_PALETTE)]
+            color_idx += 1
+    
+    return palette
+
+
+def apply_publication_style(ax, despine: bool = True):
+    """
+    Apply publication-ready styling to axes.
+    
+    Args:
+        ax: Matplotlib axes
+        despine: Remove top and right spines
+    """
+    if despine:
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+    
+    # Subtle grid
+    ax.grid(True, alpha=0.3, linestyle='-', linewidth=0.5)
+    ax.set_axisbelow(True)  # Grid behind data
 
 # Lazy loading flags
 _viz_libs_loaded = False
@@ -120,7 +196,7 @@ def _load_viz_libs():
 
 
 class Visualizer:
-    """Generate visualizations for excreta analysis."""
+    """Generate publication-ready visualizations for excreta analysis."""
     
     def __init__(self, output_dir: Path, style: str = 'whitegrid'):
         _load_viz_libs()  # Lazy load visualization libraries
@@ -130,14 +206,28 @@ class Visualizer:
         
         if HAS_MATPLOTLIB and HAS_SEABORN:
             _sns.set_style(style)
-            _plt.rcParams['figure.figsize'] = (10, 8)
-            _plt.rcParams['figure.dpi'] = 150
+            # Publication-ready defaults
+            _plt.rcParams.update({
+                'figure.figsize': (10, 8),
+                'figure.dpi': 150,
+                'font.size': 10,
+                'axes.titlesize': 12,
+                'axes.labelsize': 10,
+                'xtick.labelsize': 9,
+                'ytick.labelsize': 9,
+                'legend.fontsize': 9,
+                'axes.spines.top': False,
+                'axes.spines.right': False,
+            })
     
     def pca_plot(
         self,
         film_summary: pd.DataFrame,
         features: List[str] = None,
         color_by: str = None,
+        control_group: str = None,
+        show_loadings: bool = True,
+        loading_threshold: float = 0.1,
         title: str = "PCA of Image Samples",
         filename: str = "pca_plot.png"
     ) -> Optional[str]:
@@ -148,6 +238,9 @@ class Visualizer:
             film_summary: DataFrame with film-level data
             features: Columns to use for PCA (default: numeric columns)
             color_by: Column for color coding (e.g., 'condition')
+            control_group: Name of control group (shown in gray)
+            show_loadings: Whether to show loading vectors (arrows)
+            loading_threshold: Minimum loading magnitude to display
             title: Plot title
             filename: Output filename
             
@@ -187,6 +280,9 @@ class Visualizer:
         pca = _PCA(n_components=min(2, len(features)))
         X_pca = pca.fit_transform(X_scaled)
         
+        # Calculate total variance explained
+        total_var = sum(pca.explained_variance_ratio_) * 100
+        
         # Plot
         fig, ax = _plt.subplots(figsize=(10, 8))
         
@@ -194,41 +290,53 @@ class Visualizer:
             # Get matching indices
             valid_idx = df.index
             groups = film_summary.loc[valid_idx, color_by]
-            unique_groups = groups.unique()
-            colors = _plt.cm.Set1(np.linspace(0, 1, len(unique_groups)))
+            unique_groups = sorted(groups.unique())
             
-            for group, color in zip(unique_groups, colors):
+            # Get palette with control group support
+            palette = get_palette(unique_groups, control_group)
+            
+            for group in unique_groups:
                 mask = groups == group
                 ax.scatter(
                     X_pca[mask, 0], X_pca[mask, 1],
-                    c=[color], label=group, s=100, alpha=0.7, edgecolors='black'
+                    c=[palette[group]], label=group, s=100, alpha=0.7, 
+                    edgecolors='black', linewidth=0.5
                 )
-            ax.legend(title=color_by)
+            ax.legend(title=color_by.replace('_', ' ').title(), framealpha=0.9)
         else:
-            ax.scatter(X_pca[:, 0], X_pca[:, 1], s=100, alpha=0.7, edgecolors='black')
+            # No grouping - use default gray
+            ax.scatter(X_pca[:, 0], X_pca[:, 1], c=DEFAULT_GRAY, 
+                      s=100, alpha=0.7, edgecolors='black', linewidth=0.5)
         
         ax.set_xlabel(f'PC1 ({pca.explained_variance_ratio_[0]*100:.1f}%)')
         ax.set_ylabel(f'PC2 ({pca.explained_variance_ratio_[1]*100:.1f}%)')
-        ax.set_title(title)
-        ax.axhline(y=0, color='gray', linestyle='--', alpha=0.5)
-        ax.axvline(x=0, color='gray', linestyle='--', alpha=0.5)
+        ax.set_title(f'{title}\n(Total variance explained: {total_var:.1f}%)')
+        ax.axhline(y=0, color='gray', linestyle='--', alpha=0.3, linewidth=0.5)
+        ax.axvline(x=0, color='gray', linestyle='--', alpha=0.3, linewidth=0.5)
         
-        # Add loading vectors
-        loadings = pca.components_.T * np.sqrt(pca.explained_variance_)
-        scale = 2
-        for i, feature in enumerate(features):
-            ax.annotate(
-                '', xy=(loadings[i, 0]*scale, loadings[i, 1]*scale), xytext=(0, 0),
-                arrowprops=dict(arrowstyle='->', color='red', alpha=0.5)
-            )
-            ax.text(
-                loadings[i, 0]*scale*1.1, loadings[i, 1]*scale*1.1,
-                get_feature_label(feature), fontsize=8, color='red', alpha=0.7
-            )
+        # Add loading vectors (optional)
+        if show_loadings:
+            loadings = pca.components_.T * np.sqrt(pca.explained_variance_)
+            scale = 2
+            for i, feature in enumerate(features):
+                # Skip small loadings
+                magnitude = np.sqrt(loadings[i, 0]**2 + loadings[i, 1]**2)
+                if magnitude < loading_threshold:
+                    continue
+                    
+                ax.annotate(
+                    '', xy=(loadings[i, 0]*scale, loadings[i, 1]*scale), xytext=(0, 0),
+                    arrowprops=dict(arrowstyle='->', color='#555555', alpha=0.6, lw=1.2)
+                )
+                ax.text(
+                    loadings[i, 0]*scale*1.1, loadings[i, 1]*scale*1.1,
+                    get_feature_label(feature), fontsize=8, color='#333333', alpha=0.8
+                )
         
+        apply_publication_style(ax)
         _plt.tight_layout()
         filepath = self.output_dir / filename
-        _plt.savefig(filepath)
+        _plt.savefig(filepath, dpi=300, bbox_inches='tight')
         _plt.close()
         
         return str(filepath)
@@ -288,6 +396,8 @@ class Visualizer:
         film_summary: pd.DataFrame,
         metric: str,
         group_by: str,
+        control_group: str = None,
+        show_significance: bool = False,
         title: str = None,
         filename: str = None,
         ylabel: str = None
@@ -299,8 +409,11 @@ class Visualizer:
             film_summary: DataFrame with film-level data
             metric: Column to plot (e.g., 'rod_fraction')
             group_by: Column for grouping
+            control_group: Name of control group (shown in gray)
+            show_significance: Whether to show statistical significance
             title: Plot title
             filename: Output filename
+            ylabel: Y-axis label
         """
         if not HAS_MATPLOTLIB or not HAS_SEABORN:
             return None
@@ -308,28 +421,92 @@ class Visualizer:
         if metric not in film_summary.columns or group_by not in film_summary.columns:
             return None
         
-        fig, ax = _plt.subplots(figsize=(10, 6))
+        # Get unique groups and create palette
+        unique_groups = sorted(film_summary[group_by].dropna().unique())
+        palette = get_palette(unique_groups, control_group)
         
-        _sns.violinplot(
-            data=film_summary, x=group_by, y=metric,
-            ax=ax, inner='box', palette='Set2'
+        fig, ax = _plt.subplots(figsize=(max(8, len(unique_groups) * 1.5), 6))
+        
+        # Violin with lighter alpha
+        violin = _sns.violinplot(
+            data=film_summary, x=group_by, y=metric, 
+            hue=group_by, order=unique_groups, hue_order=unique_groups,
+            ax=ax, inner='box', palette=palette, alpha=0.6, linewidth=1, legend=False
         )
+        
+        # Individual points
         _sns.stripplot(
-            data=film_summary, x=group_by, y=metric,
-            ax=ax, color='black', alpha=0.5, size=4
+            data=film_summary, x=group_by, y=metric, order=unique_groups,
+            ax=ax, color='#333333', alpha=0.6, size=4, jitter=True
         )
+        
+        # Statistical significance (basic implementation)
+        if show_significance and control_group and control_group in unique_groups:
+            self._add_significance_annotations(
+                ax, film_summary, metric, group_by, unique_groups, control_group
+            )
         
         metric_label = get_feature_label(metric)
         ax.set_title(title or f'{metric_label} by {group_by.replace("_", " ").title()}')
         ax.set_ylabel(ylabel or metric_label)
         ax.set_xlabel(group_by.replace("_", " ").title())
         
+        apply_publication_style(ax)
         _plt.tight_layout()
         filepath = self.output_dir / (filename or f'violin_{metric}_by_{group_by}.png')
-        _plt.savefig(filepath)
+        _plt.savefig(filepath, dpi=300, bbox_inches='tight')
         _plt.close()
         
         return str(filepath)
+    
+    def _add_significance_annotations(
+        self, ax, data: pd.DataFrame, metric: str, group_by: str,
+        groups: List[str], control_group: str
+    ):
+        """Add statistical significance annotations (*, **, ***, ns)."""
+        from scipy import stats
+        
+        control_data = data[data[group_by] == control_group][metric].dropna()
+        if len(control_data) < 2:
+            return
+        
+        y_max = data[metric].max()
+        y_range = data[metric].max() - data[metric].min()
+        y_offset = y_range * 0.05
+        
+        control_idx = groups.index(control_group)
+        
+        for i, group in enumerate(groups):
+            if group == control_group:
+                continue
+            
+            group_data = data[data[group_by] == group][metric].dropna()
+            if len(group_data) < 2:
+                continue
+            
+            # Mann-Whitney U test
+            try:
+                _, p_value = stats.mannwhitneyu(control_data, group_data, alternative='two-sided')
+            except:
+                continue
+            
+            # Convert p-value to stars
+            if p_value > 0.05:
+                sig_text = 'ns'
+            elif p_value > 0.01:
+                sig_text = '*'
+            elif p_value > 0.001:
+                sig_text = '**'
+            elif p_value > 0.0001:
+                sig_text = '***'
+            else:
+                sig_text = '****'
+            
+            # Draw bracket and text
+            y_bar = y_max + y_offset * (abs(i - control_idx) + 1)
+            
+            # Simple text annotation above each group
+            ax.text(i, y_bar, sig_text, ha='center', va='bottom', fontsize=10, fontweight='bold')
     
     def box_comparison(
         self,
@@ -387,10 +564,18 @@ class Visualizer:
         row_label: str = 'filename',
         title: str = "Feature Heatmap",
         filename: str = "heatmap.png",
-        cluster_rows: bool = True
+        sort_by: str = 'first_column'
     ) -> Optional[str]:
         """
         Generate heatmap of features across samples.
+        
+        Args:
+            film_summary: DataFrame with film-level data
+            features: Columns to include in heatmap
+            row_label: Column for row labels
+            title: Plot title
+            filename: Output filename
+            sort_by: Row sorting method - 'first_column', 'cluster', or 'original'
         """
         if not HAS_MATPLOTLIB or not HAS_SEABORN:
             return None
@@ -412,37 +597,44 @@ class Visualizer:
         df_scaled = (df - df.mean()) / df.std()
         
         # Rename columns for display
-        df_scaled.columns = [get_feature_label(f) for f in features]
+        display_cols = [get_feature_label(f) for f in features]
+        df_scaled.columns = display_cols
         
         # Set index
         if row_label in film_summary.columns:
             df_scaled.index = film_summary[row_label]
         
-        # Create heatmap
-        fig, ax = _plt.subplots(figsize=(12, max(8, len(df_scaled) * 0.3)))
-        
-        if cluster_rows and HAS_SKLEARN:
+        # Sort rows
+        if sort_by == 'first_column':
+            # Sort by first column (descending for visual appeal)
+            df_scaled = df_scaled.sort_values(by=display_cols[0], ascending=False)
+        elif sort_by == 'cluster' and HAS_SKLEARN and len(df_scaled) > 2:
             from scipy.cluster.hierarchy import linkage, dendrogram
             from scipy.spatial.distance import pdist
             
-            # Cluster rows
-            if len(df_scaled) > 2:
-                linkage_matrix = linkage(pdist(df_scaled.fillna(0)), method='ward')
-                dendro = dendrogram(linkage_matrix, no_plot=True)
-                df_scaled = df_scaled.iloc[dendro['leaves']]
+            linkage_matrix = linkage(pdist(df_scaled.fillna(0)), method='ward')
+            dendro = dendrogram(linkage_matrix, no_plot=True)
+            df_scaled = df_scaled.iloc[dendro['leaves']]
+        # else: 'original' - keep original order
+        
+        # Dynamic figure height based on row count
+        fig_height = max(8, min(20, len(df_scaled) * 0.35))
+        fig, ax = _plt.subplots(figsize=(12, fig_height))
         
         _sns.heatmap(
             df_scaled, ax=ax, cmap='RdBu_r', center=0,
             xticklabels=True, yticklabels=True,
-            cbar_kws={'label': 'Z-score'}
+            cbar_kws={'label': 'Z-score', 'shrink': 0.8},
+            linewidths=0.5, linecolor='white'
         )
         
-        ax.set_title(title)
-        _plt.xticks(rotation=45, ha='right')
+        ax.set_title(title, fontsize=12, fontweight='bold')
+        _plt.xticks(rotation=30, ha='right', fontsize=9)
+        _plt.yticks(fontsize=8)
         
         _plt.tight_layout()
         filepath = self.output_dir / filename
-        _plt.savefig(filepath)
+        _plt.savefig(filepath, dpi=300, bbox_inches='tight')
         _plt.close()
         
         return str(filepath)
@@ -452,10 +644,18 @@ class Visualizer:
         film_summary: pd.DataFrame,
         features: List[str] = None,
         color_by: str = None,
+        control_group: str = None,
         filename: str = "scatter_matrix.png"
     ) -> Optional[str]:
         """
         Generate scatter matrix (pair plot) of features.
+        
+        Args:
+            film_summary: DataFrame with film-level data
+            features: Columns to include in scatter matrix
+            color_by: Column for color coding
+            control_group: Name of control group (shown in gray)
+            filename: Output filename
         """
         if not HAS_MATPLOTLIB or not HAS_SEABORN:
             return None
@@ -475,14 +675,22 @@ class Visualizer:
         
         if color_by and color_by in film_summary.columns:
             plot_df[color_by] = film_summary[color_by]
-            g = _sns.pairplot(plot_df, hue=color_by, palette='Set1', diag_kind='kde')
+            unique_groups = sorted(plot_df[color_by].dropna().unique())
+            palette = get_palette(unique_groups, control_group)
+            g = _sns.pairplot(
+                plot_df, hue=color_by, palette=palette, 
+                diag_kind='kde', plot_kws={'alpha': 0.7, 'edgecolor': 'white', 's': 50}
+            )
         else:
-            g = _sns.pairplot(plot_df, diag_kind='kde')
+            g = _sns.pairplot(
+                plot_df, diag_kind='kde',
+                plot_kws={'color': DEFAULT_GRAY, 'alpha': 0.7, 'edgecolor': 'white', 's': 50}
+            )
         
-        g.fig.suptitle('Feature Relationships', y=1.02)
+        g.fig.suptitle('Feature Relationships', y=1.02, fontweight='bold')
         
         filepath = self.output_dir / filename
-        g.savefig(filepath)
+        g.savefig(filepath, dpi=300, bbox_inches='tight')
         _plt.close()
         
         return str(filepath)
@@ -496,6 +704,12 @@ class Visualizer:
     ) -> Optional[str]:
         """
         Scatter plot of area vs IOD for individual deposits.
+        
+        Args:
+            deposits_df: DataFrame with individual deposit data
+            color_by_label: Whether to color by deposit label
+            title: Plot title
+            filename: Output filename
         """
         if not HAS_MATPLOTLIB:
             return None
@@ -503,28 +717,31 @@ class Visualizer:
         fig, ax = _plt.subplots(figsize=(10, 8))
         
         if color_by_label and 'label' in deposits_df.columns:
-            colors = {'normal': 'green', 'rod': 'red', 'artifact': 'gray'}
             for label in ['normal', 'rod', 'artifact']:
                 mask = deposits_df['label'] == label
                 if mask.any():
                     ax.scatter(
                         deposits_df.loc[mask, 'area_px'],
                         deposits_df.loc[mask, 'iod'],
-                        c=colors.get(label, 'blue'),
+                        c=DEPOSIT_COLORS.get(label, DEFAULT_GRAY),
                         label=label.capitalize(),
-                        alpha=0.5, s=30
+                        alpha=0.6, s=25, edgecolors='white', linewidth=0.3
                     )
-            ax.legend()
+            ax.legend(framealpha=0.9)
         else:
-            ax.scatter(deposits_df['area_px'], deposits_df['iod'], alpha=0.5)
+            ax.scatter(
+                deposits_df['area_px'], deposits_df['iod'], 
+                c=DEFAULT_GRAY, alpha=0.6, s=25, edgecolors='white', linewidth=0.3
+            )
         
-        ax.set_xlabel('Area (pixels)')
-        ax.set_ylabel('IOD')
-        ax.set_title(title)
+        ax.set_xlabel(get_feature_label('area_px'))
+        ax.set_ylabel(get_feature_label('iod'))
+        ax.set_title(title, fontweight='bold')
         
+        apply_publication_style(ax)
         _plt.tight_layout()
         filepath = self.output_dir / filename
-        _plt.savefig(filepath)
+        _plt.savefig(filepath, dpi=300, bbox_inches='tight')
         _plt.close()
         
         return str(filepath)
@@ -533,36 +750,76 @@ class Visualizer:
         self,
         film_summary: pd.DataFrame,
         group_by: str = None,
+        control_group: str = None,
         filename: str = "dashboard.png"
     ) -> Optional[str]:
         """
         Generate summary dashboard with multiple plots.
+        
+        Args:
+            film_summary: DataFrame with film-level data
+            group_by: Column for grouping
+            control_group: Name of control group (shown in gray)
+            filename: Output filename
         """
         if not HAS_MATPLOTLIB or not HAS_SEABORN:
             return None
         
-        fig, axes = _plt.subplots(2, 2, figsize=(14, 12))
+        # Get unique groups and calculate optimal width
+        if group_by and group_by in film_summary.columns:
+            unique_groups = sorted(film_summary[group_by].dropna().unique())
+            n_groups = len(unique_groups)
+            palette = get_palette(unique_groups, control_group)
+            
+            # Box width: max 0.6, scales down with more groups
+            box_width = min(0.6, 0.8 / max(1, n_groups / 4))
+        else:
+            unique_groups = []
+            n_groups = 0
+            palette = [DEFAULT_GRAY]
+            box_width = 0.5
         
-        # 1. ROD fraction distribution
+        # Dynamic figure size based on number of groups
+        fig_width = max(12, min(16, n_groups * 1.2 + 8))
+        fig, axes = _plt.subplots(2, 2, figsize=(fig_width, 10))
+        
+        # 1. ROD fraction distribution (Box plot)
         ax = axes[0, 0]
         if group_by and group_by in film_summary.columns:
-            _sns.boxplot(data=film_summary, x=group_by, y='rod_fraction', ax=ax, palette='Set2')
-            _sns.stripplot(data=film_summary, x=group_by, y='rod_fraction', ax=ax, color='black', alpha=0.5)
+            _sns.boxplot(
+                data=film_summary, x=group_by, y='rod_fraction', 
+                hue=group_by, order=unique_groups, hue_order=unique_groups,
+                ax=ax, palette=palette, width=box_width,
+                linewidth=1, fliersize=4, legend=False
+            )
+            _sns.stripplot(
+                data=film_summary, x=group_by, y='rod_fraction',
+                order=unique_groups, ax=ax, color='#333333', alpha=0.6, size=4
+            )
         else:
-            _sns.histplot(film_summary['rod_fraction'], ax=ax, kde=True)
-        ax.set_title('ROD Fraction Distribution')
+            _sns.histplot(film_summary['rod_fraction'], ax=ax, kde=True, color=DEFAULT_GRAY)
+        ax.set_title('ROD Fraction Distribution', fontweight='bold')
         ax.set_ylabel('ROD Fraction')
+        ax.set_xlabel('')
+        apply_publication_style(ax)
         
-        # 2. Total deposits
+        # 2. Total deposits (Bar plot)
         ax = axes[0, 1]
         if group_by and group_by in film_summary.columns:
-            _sns.barplot(data=film_summary, x=group_by, y='n_total', ax=ax, palette='Set2', errorbar='sd')
+            _sns.barplot(
+                data=film_summary, x=group_by, y='n_total',
+                hue=group_by, order=unique_groups, hue_order=unique_groups,
+                ax=ax, palette=palette, 
+                errorbar='sd', width=box_width, edgecolor='black', linewidth=0.5, legend=False
+            )
         else:
-            _sns.histplot(film_summary['n_total'], ax=ax, kde=True)
-        ax.set_title('Total Deposits per Film')
+            _sns.histplot(film_summary['n_total'], ax=ax, kde=True, color=DEFAULT_GRAY)
+        ax.set_title('Total Deposits per Film', fontweight='bold')
         ax.set_ylabel('Count')
+        ax.set_xlabel('')
+        apply_publication_style(ax)
         
-        # 3. Normal vs ROD counts
+        # 3. Normal vs ROD counts (Grouped bar)
         ax = axes[1, 0]
         if 'n_normal' in film_summary.columns and 'n_rod' in film_summary.columns:
             plot_df = film_summary.melt(
@@ -571,22 +828,48 @@ class Visualizer:
                 var_name='Type', value_name='Count'
             )
             plot_df['Type'] = plot_df['Type'].map({'n_normal': 'Normal', 'n_rod': 'ROD'})
-            _sns.barplot(data=plot_df, x='Type', y='Count', hue=group_by if group_by else None, ax=ax, palette='Set2', errorbar='sd')
-        ax.set_title('Deposit Counts by Type')
+            
+            if group_by:
+                _sns.barplot(
+                    data=plot_df, x='Type', y='Count', hue=group_by,
+                    hue_order=unique_groups, ax=ax, palette=palette, 
+                    errorbar='sd', edgecolor='black', linewidth=0.5
+                )
+                ax.legend(title=group_by.replace('_', ' ').title(), 
+                         fontsize=8, title_fontsize=9, framealpha=0.9)
+            else:
+                _sns.barplot(
+                    data=plot_df, x='Type', y='Count', ax=ax, 
+                    color=DEFAULT_GRAY, errorbar='sd', edgecolor='black', linewidth=0.5
+                )
+        ax.set_title('Deposit Counts by Type', fontweight='bold')
+        ax.set_xlabel('')
+        apply_publication_style(ax)
         
-        # 4. Total IOD
+        # 4. Total IOD (Box plot)
         ax = axes[1, 1]
         if 'total_iod' in film_summary.columns:
             if group_by and group_by in film_summary.columns:
-                _sns.boxplot(data=film_summary, x=group_by, y='total_iod', ax=ax, palette='Set2')
+                _sns.boxplot(
+                    data=film_summary, x=group_by, y='total_iod',
+                    hue=group_by, order=unique_groups, hue_order=unique_groups,
+                    ax=ax, palette=palette, width=box_width,
+                    linewidth=1, fliersize=4, legend=False
+                )
+                _sns.stripplot(
+                    data=film_summary, x=group_by, y='total_iod',
+                    order=unique_groups, ax=ax, color='#333333', alpha=0.6, size=4
+                )
             else:
-                _sns.histplot(film_summary['total_iod'], ax=ax, kde=True)
-        ax.set_title('Total IOD Distribution')
+                _sns.histplot(film_summary['total_iod'], ax=ax, kde=True, color=DEFAULT_GRAY)
+        ax.set_title('Total IOD Distribution', fontweight='bold')
         ax.set_ylabel('Total IOD')
+        ax.set_xlabel('')
+        apply_publication_style(ax)
         
         _plt.tight_layout()
         filepath = self.output_dir / filename
-        _plt.savefig(filepath)
+        _plt.savefig(filepath, dpi=300, bbox_inches='tight')
         _plt.close()
         
         return str(filepath)
@@ -596,10 +879,18 @@ def generate_all_visualizations(
     film_summary: pd.DataFrame,
     deposits_df: pd.DataFrame,
     output_dir: Path,
-    group_by: str = None
+    group_by: str = None,
+    control_group: str = None
 ) -> Dict[str, str]:
     """
     Generate all available visualizations.
+    
+    Args:
+        film_summary: DataFrame with film-level data
+        deposits_df: DataFrame with individual deposit data
+        output_dir: Output directory for figures
+        group_by: Column for grouping
+        control_group: Name of control group (shown in gray)
     
     Returns:
         Dict mapping visualization name to filepath
@@ -608,12 +899,12 @@ def generate_all_visualizations(
     results = {}
     
     # Dashboard
-    path = viz.summary_dashboard(film_summary, group_by)
+    path = viz.summary_dashboard(film_summary, group_by, control_group)
     if path:
         results['dashboard'] = path
     
     # PCA
-    path = viz.pca_plot(film_summary, color_by=group_by)
+    path = viz.pca_plot(film_summary, color_by=group_by, control_group=control_group)
     if path:
         results['pca'] = path
     
@@ -625,12 +916,15 @@ def generate_all_visualizations(
     # Violin plots for key metrics
     for metric in ['rod_fraction', 'total_iod', 'n_total']:
         if metric in film_summary.columns and group_by:
-            path = viz.violin_comparison(film_summary, metric, group_by)
+            path = viz.violin_comparison(
+                film_summary, metric, group_by, 
+                control_group=control_group
+            )
             if path:
                 results[f'violin_{metric}'] = path
     
     # Scatter matrix
-    path = viz.scatter_matrix(film_summary, color_by=group_by)
+    path = viz.scatter_matrix(film_summary, color_by=group_by, control_group=control_group)
     if path:
         results['scatter_matrix'] = path
     
