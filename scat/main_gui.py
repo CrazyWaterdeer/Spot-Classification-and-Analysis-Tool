@@ -2494,7 +2494,7 @@ class ResultsTab(QWidget):
             
             # 2. Regenerate statistics and visualizations
             from .visualization import generate_all_visualizations
-            from .statistics import StatisticalAnalyzer
+            from .statistics import run_comprehensive_analysis
             
             viz_results = generate_all_visualizations(
                 image_summary, deposit_data, output_dir,
@@ -2504,10 +2504,11 @@ class ResultsTab(QWidget):
             self.progress.setValue(70)
             QApplication.processEvents()
             
-            stats_analyzer = StatisticalAnalyzer()
-            stats_results = stats_analyzer.run_all_tests(
+            # Run comprehensive statistical analysis
+            stats_results = run_comprehensive_analysis(
                 film_summary=image_summary,
-                group_by=self.results.get('group_by')
+                deposits_df=deposit_data,
+                group_column=self.results.get('group_by')
             )
             
             self.progress.setValue(80)
@@ -2519,15 +2520,17 @@ class ResultsTab(QWidget):
             reporter.generate_html_report(
                 film_summary=image_summary,
                 deposit_data=deposit_data, 
-                statistical_results=stats_results.get('metrics', {}),
+                statistical_results=stats_results.get('basic', {}).get('metrics', {}),
                 visualization_paths=viz_results,
-                group_by=self.results.get('group_by')
+                group_by=self.results.get('group_by'),
+                comprehensive_stats=stats_results  # Pass all analysis results
             )
             
             self.progress.setValue(100)
             
             # Update results and refresh display
             self.results['film_summary'] = image_summary  # Keep key for compatibility
+            self.results['comprehensive_stats'] = stats_results  # Store comprehensive results
             self.results['deposit_data'] = deposit_data
             self.results['viz_results'] = viz_results
             self.results['is_quick_mode'] = False  # Report generated, no longer quick mode

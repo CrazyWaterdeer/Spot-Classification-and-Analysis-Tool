@@ -433,28 +433,31 @@ class Theme:
         """Return the stylesheet for labeling_gui (simplified version)."""
         if cls._cached_labeling_stylesheet is None:
             cls._cached_labeling_stylesheet = f"""
-            QMainWindow {{
+            QMainWindow, QWidget {{
                 background-color: {cls.BG_DARKEST};
                 color: {cls.TEXT_PRIMARY};
             }}
             QGroupBox {{
                 font-weight: bold;
                 border: 1px solid {cls.BORDER};
-                border-radius: 6px;
-                margin-top: 16px;
-                padding-top: 16px;
+                border-radius: 8px;
+                margin-top: 20px;
+                padding: 20px 12px 12px 12px;
                 background-color: {cls.BG_DARK};
             }}
             QGroupBox::title {{
                 subcontrol-origin: margin;
-                left: 10px;
-                padding: 0 8px;
+                subcontrol-position: top left;
+                left: 14px;
+                top: 6px;
+                padding: 2px 10px;
                 color: {cls.PRIMARY};
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                     stop:0 rgba(10, 10, 10, 255),
                     stop:0.55 rgba(10, 10, 10, 255),
                     stop:0.65 rgba(18, 18, 18, 255),
                     stop:1 rgba(18, 18, 18, 255));
+                font-size: 13px;
             }}
             QPushButton {{
                 background-color: {cls.BG_LIGHT};
@@ -482,14 +485,34 @@ class Theme:
             QSpinBox:focus, QDoubleSpinBox:focus {{
                 border-color: {cls.PRIMARY};
             }}
+            
+            /* Table Frame with rounded corners */
+            QFrame#tableFrame {{
+                background-color: {cls.BG_DARK};
+                border: 1px solid {cls.BORDER};
+                border-radius: 6px;
+            }}
+            QFrame#tableFrame QTableWidget {{
+                background-color: transparent;
+                border: none;
+                gridline-color: {cls.BORDER};
+                color: {cls.TEXT_PRIMARY};
+            }}
             QTableWidget {{
                 background-color: {cls.BG_DARK};
                 border: 1px solid {cls.BORDER};
                 gridline-color: {cls.BORDER};
                 color: {cls.TEXT_PRIMARY};
             }}
+            QTableWidget QTableCornerButton::section {{
+                background-color: {cls.BG_DARK};
+                border: none;
+            }}
             QTableWidget::item:selected {{
                 background-color: {cls.SECONDARY};
+            }}
+            QHeaderView {{
+                background-color: transparent;
             }}
             QHeaderView::section {{
                 background-color: {cls.BG_DARK};
@@ -532,6 +555,21 @@ class Theme:
                 border-bottom: 1px solid {cls.BORDER};
                 spacing: 4px;
                 padding: 4px;
+            }}
+            QToolBar QToolButton {{
+                background-color: {cls.BG_DARK};
+                border: 1px solid transparent;
+                border-radius: 4px;
+                padding: 6px 12px;
+                color: {cls.TEXT_PRIMARY};
+                font-weight: bold;
+            }}
+            QToolBar QToolButton:hover {{
+                background-color: {cls.SECONDARY};
+                border-color: {cls.BORDER};
+            }}
+            QToolBar QToolButton:pressed {{
+                background-color: {cls.PRIMARY};
             }}
             QSplitter::handle {{
                 background-color: {cls.BORDER};
@@ -576,6 +614,42 @@ class Theme:
             QCheckBox::indicator:checked {{
                 background-color: {cls.PRIMARY};
                 border-color: {cls.PRIMARY};
+            }}
+            
+            /* ScrollBar */
+            QScrollBar:vertical {{
+                background-color: {cls.BG_DARK};
+                width: 10px;
+                border-radius: 5px;
+                margin: 2px;
+            }}
+            QScrollBar::handle:vertical {{
+                background-color: {cls.BG_LIGHTER};
+                border-radius: 5px;
+                min-height: 30px;
+            }}
+            QScrollBar::handle:vertical:hover {{
+                background-color: {cls.SECONDARY};
+            }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+                height: 0px;
+            }}
+            QScrollBar:horizontal {{
+                background-color: {cls.BG_DARK};
+                height: 10px;
+                border-radius: 5px;
+                margin: 2px;
+            }}
+            QScrollBar::handle:horizontal {{
+                background-color: {cls.BG_LIGHTER};
+                border-radius: 5px;
+                min-width: 30px;
+            }}
+            QScrollBar::handle:horizontal:hover {{
+                background-color: {cls.SECONDARY};
+            }}
+            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
+                width: 0px;
             }}
         """
         return cls._cached_labeling_stylesheet

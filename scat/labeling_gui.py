@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
     QPushButton, QLabel, QFileDialog, QGraphicsView, QGraphicsScene, 
     QGraphicsPathItem, QGraphicsRectItem, QToolBar, QSplitter, QGroupBox,
     QSpinBox, QDoubleSpinBox, QFormLayout, QTableWidget, QCheckBox, QComboBox,
-    QTableWidgetItem, QHeaderView, QButtonGroup, QRadioButton, QScrollArea
+    QTableWidgetItem, QHeaderView, QButtonGroup, QRadioButton, QScrollArea, QFrame
 )
 from PySide6.QtCore import Qt, QRectF, QTimer, Signal
 from PySide6.QtGui import (
@@ -578,13 +578,40 @@ class LabelingWindow(QMainWindow):
         edit_group = QGroupBox("Edit Mode")
         edit_layout = QVBoxLayout()
         
+        # Style to completely hide radio button indicator (circle) in all states
+        radio_style = """
+            QRadioButton::indicator {
+                width: 0px;
+                height: 0px;
+                margin: 0px;
+                padding: 0px;
+                border: none;
+                background: transparent;
+            }
+            QRadioButton::indicator:checked {
+                width: 0px;
+                height: 0px;
+                border: none;
+                background: transparent;
+            }
+            QRadioButton::indicator:unchecked {
+                width: 0px;
+                height: 0px;
+                border: none;
+                background: transparent;
+            }
+        """
+        
         self.mode_group = QButtonGroup()
         self.radio_pan = QRadioButton("Pan (Q)")
+        self.radio_pan.setStyleSheet(radio_style)
         self.radio_pan.setChecked(True)  # Default to pan mode
         self.radio_pan.setToolTip("Drag to pan the view")
         self.radio_select = QRadioButton("Select (S)")
+        self.radio_select.setStyleSheet(radio_style)
         self.radio_select.setToolTip("Click to select, drag to box-select multiple")
         self.radio_add = QRadioButton("Add Deposit (A)")
+        self.radio_add.setStyleSheet(radio_style)
         
         self.mode_group.addButton(self.radio_pan, ImageViewer.MODE_PAN)
         self.mode_group.addButton(self.radio_select, ImageViewer.MODE_SELECT)
@@ -658,27 +685,58 @@ class LabelingWindow(QMainWindow):
         
         # Detection settings (hidden in EDIT_MODE)
         self.detect_group = QGroupBox("Detection Settings")
-        detect_layout = QFormLayout()
+        detect_layout = QVBoxLayout()
+        detect_layout.setSpacing(8)
         
+        # Common width for spin boxes
+        SPIN_WIDTH = 80
+        
+        # Min Area row
+        min_area_row = QHBoxLayout()
+        min_area_label = QLabel("Min Area")
+        min_area_label.setStyleSheet("background-color: transparent;")
+        min_area_row.addWidget(min_area_label)
+        min_area_row.addStretch()
         self.min_area_spin = NoScrollSpinBox()
         self.min_area_spin.setRange(1, 1000)
         self.min_area_spin.setValue(20)
-        detect_layout.addRow("Min Area:", self.min_area_spin)
+        self.min_area_spin.setButtonSymbols(QSpinBox.NoButtons)
+        self.min_area_spin.setFixedWidth(SPIN_WIDTH)
+        min_area_row.addWidget(self.min_area_spin)
+        detect_layout.addLayout(min_area_row)
         
+        # Max Area row
+        max_area_row = QHBoxLayout()
+        max_area_label = QLabel("Max Area")
+        max_area_label.setStyleSheet("background-color: transparent;")
+        max_area_row.addWidget(max_area_label)
+        max_area_row.addStretch()
         self.max_area_spin = NoScrollSpinBox()
         self.max_area_spin.setRange(100, 50000)
         self.max_area_spin.setValue(10000)
-        detect_layout.addRow("Max Area:", self.max_area_spin)
+        self.max_area_spin.setButtonSymbols(QSpinBox.NoButtons)
+        self.max_area_spin.setFixedWidth(SPIN_WIDTH)
+        max_area_row.addWidget(self.max_area_spin)
+        detect_layout.addLayout(max_area_row)
         
+        # ROD Threshold row
+        threshold_row = QHBoxLayout()
+        threshold_label = QLabel("ROD Threshold")
+        threshold_label.setStyleSheet("background-color: transparent;")
+        threshold_row.addWidget(threshold_label)
+        threshold_row.addStretch()
         self.threshold_spin = NoScrollDoubleSpinBox()
         self.threshold_spin.setRange(0.1, 1.0)
         self.threshold_spin.setSingleStep(0.05)
         self.threshold_spin.setValue(0.6)
-        detect_layout.addRow("ROD Threshold:", self.threshold_spin)
+        self.threshold_spin.setButtonSymbols(QDoubleSpinBox.NoButtons)
+        self.threshold_spin.setFixedWidth(SPIN_WIDTH)
+        threshold_row.addWidget(self.threshold_spin)
+        detect_layout.addLayout(threshold_row)
         
         detect_btn = QPushButton("Re-detect")
         detect_btn.clicked.connect(self._detect_deposits)
-        detect_layout.addRow(detect_btn)
+        detect_layout.addWidget(detect_btn)
         self.detect_group.setLayout(detect_layout)
         right_layout.addWidget(self.detect_group)
         
@@ -751,7 +809,13 @@ class LabelingWindow(QMainWindow):
         stats_group.setLayout(stats_layout)
         right_layout.addWidget(stats_group)
         
-        # Table
+        # Table with rounded frame
+        table_frame = QFrame()
+        table_frame.setObjectName("tableFrame")
+        table_frame_layout = QVBoxLayout(table_frame)
+        table_frame_layout.setContentsMargins(0, 0, 0, 0)
+        table_frame_layout.setSpacing(0)
+        
         self.deposit_table = QTableWidget()
         self.deposit_table.setColumnCount(5)
         self.deposit_table.setHorizontalHeaderLabels(["ID", "Area", "Circ", "Hue", "Label"])
@@ -767,7 +831,9 @@ class LabelingWindow(QMainWindow):
         
         self.deposit_table.itemSelectionChanged.connect(self._on_table_select)
         self.deposit_table.doubleClicked.connect(self._on_table_double_click)
-        right_layout.addWidget(self.deposit_table)
+        
+        table_frame_layout.addWidget(self.deposit_table)
+        right_layout.addWidget(table_frame)
         
         right_layout.addStretch()
         

@@ -81,11 +81,85 @@ class FeatureExtractor:
         }
 
 
-def estimate_ph(hue: float) -> str:
-    """Estimate pH category from BPB hue value."""
-    if hue < 60:
+# =============================================================================
+# pH Estimation from BPB (Bromophenol Blue) Color
+# =============================================================================
+# BPB color change:
+#   - pH < 3.0:    Yellow (Hue ~30-60°)
+#   - pH 3.0-4.6:  Transition Green→Blue (Hue ~60-200°)
+#   - pH > 4.6:    Blue (Hue ~200-240°)
+# =============================================================================
+
+# pH category thresholds (in Hue degrees)
+PH_HUE_ACIDIC_MAX = 60       # Below this = acidic (yellow)
+PH_HUE_BASIC_MIN = 180       # Above this = basic (blue)
+
+# pH estimation parameters (linear interpolation within BPB range)
+PH_MIN = 2.5                  # Estimated pH at pure yellow
+PH_MAX = 5.5                  # Estimated pH at pure blue
+HUE_AT_PH_MIN = 45            # Hue value corresponding to pH_MIN
+HUE_AT_PH_MAX = 220           # Hue value corresponding to pH_MAX
+
+
+def estimate_ph_category(hue: float) -> str:
+    """
+    Estimate pH category from BPB hue value.
+    
+    Args:
+        hue: Hue value in degrees (0-360)
+        
+    Returns:
+        'acidic', 'transitional', or 'basic'
+    """
+    if hue < PH_HUE_ACIDIC_MAX:
         return "acidic"
-    elif hue < 150:
+    elif hue < PH_HUE_BASIC_MIN:
         return "transitional"
     else:
-        return "neutral/basic"
+        return "basic"
+
+
+def estimate_ph_value(hue: float) -> float:
+    """
+    Estimate numeric pH value from BPB hue.
+    
+    Uses linear interpolation between yellow (acidic) and blue (basic).
+    Note: This is an approximation; actual pH depends on many factors.
+    
+    Args:
+        hue: Hue value in degrees (0-360)
+        
+    Returns:
+        Estimated pH value (typically 2.5-5.5 for BPB range)
+    """
+    # Clamp hue to valid range
+    hue_clamped = max(HUE_AT_PH_MIN, min(HUE_AT_PH_MAX, hue))
+    
+    # Linear interpolation
+    ph = PH_MIN + (hue_clamped - HUE_AT_PH_MIN) * (PH_MAX - PH_MIN) / (HUE_AT_PH_MAX - HUE_AT_PH_MIN)
+    
+    return round(ph, 2)
+
+
+def calculate_acidity_index(hue: float) -> float:
+    """
+    Calculate acidity index from hue (0-1 scale).
+    
+    Args:
+        hue: Hue value in degrees (0-360)
+        
+    Returns:
+        Acidity index: 1.0 = fully acidic (yellow), 0.0 = fully basic (blue)
+    """
+    # Normalize hue to 0-1 scale (inverted: lower hue = higher acidity)
+    hue_clamped = max(HUE_AT_PH_MIN, min(HUE_AT_PH_MAX, hue))
+    acidity = 1.0 - (hue_clamped - HUE_AT_PH_MIN) / (HUE_AT_PH_MAX - HUE_AT_PH_MIN)
+    
+    return round(max(0.0, min(1.0, acidity)), 3)
+
+
+# Legacy function for backward compatibility
+def estimate_ph(hue: float) -> str:
+    """Estimate pH category from BPB hue value. (Deprecated: use estimate_ph_category)"""
+    return estimate_ph_category(hue)
+

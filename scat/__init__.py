@@ -10,7 +10,13 @@ from .features import FeatureExtractor
 from .classifier import ThresholdClassifier, RandomForestClassifier, ClassifierConfig
 from .analyzer import Analyzer, AnalysisResult, ReportGenerator
 from .trainer import DataLoader, RFTrainer, CNNTrainer, train_from_labels
-from .statistics import StatisticalAnalyzer, generate_statistics_report
+from .statistics import (
+    StatisticalAnalyzer, generate_statistics_report, run_comprehensive_analysis,
+    analyze_ph, analyze_pigmentation, analyze_size_distribution,
+    analyze_density, analyze_correlations, analyze_morphology,
+    pHAnalyzer, PigmentationAnalyzer, SizeDistributionAnalyzer,
+    DensityAnalyzer, CorrelationAnalyzer, MorphologyAnalyzer
+)
 from .spatial import SpatialAnalyzer, SpatialResult, aggregate_spatial_stats
 from .report import generate_report
 
@@ -44,7 +50,15 @@ __all__ = [
     'ThresholdClassifier', 'RandomForestClassifier', 'ClassifierConfig',
     'Analyzer', 'AnalysisResult', 'ReportGenerator',
     'DataLoader', 'RFTrainer', 'CNNTrainer', 'train_from_labels',
-    'StatisticalAnalyzer', 'generate_statistics_report',
+    # Statistics - Core
+    'StatisticalAnalyzer', 'generate_statistics_report', 'run_comprehensive_analysis',
+    # Statistics - Analyzers
+    'pHAnalyzer', 'PigmentationAnalyzer', 'SizeDistributionAnalyzer',
+    'DensityAnalyzer', 'CorrelationAnalyzer', 'MorphologyAnalyzer',
+    # Statistics - Convenience functions
+    'analyze_ph', 'analyze_pigmentation', 'analyze_size_distribution',
+    'analyze_density', 'analyze_correlations', 'analyze_morphology',
+    # Spatial
     'SpatialAnalyzer', 'SpatialResult', 'aggregate_spatial_stats',
     'generate_report',
     'UNet', 'UNetDetector', 'SegmentationTrainer',
