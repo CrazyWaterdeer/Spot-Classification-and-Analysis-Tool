@@ -7,6 +7,14 @@ This script is the entry point for the packaged EXE.
 import sys
 import os
 
+# Set Windows AppUserModelID for proper taskbar icon display
+# This MUST be called before any Qt imports
+if sys.platform == 'win32':
+    import ctypes
+    # Unique identifier for this application
+    APP_ID = 'SCAT.DepositAnalyzer.1.0'
+    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)
+
 # Add the parent directory to path for proper imports
 if getattr(sys, 'frozen', False):
     # Running as compiled EXE

@@ -2778,6 +2778,13 @@ class MainWindow(QMainWindow):
 
 def run_gui():
     """Launch the main GUI application."""
+    # Set Windows AppUserModelID for proper taskbar icon display
+    # Must be called BEFORE QApplication is created
+    if sys.platform == 'win32':
+        import ctypes
+        APP_ID = 'SCAT.DepositAnalyzer.1.0'
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)
+    
     app = QApplication(sys.argv)
     app.setStyle('Fusion')
     

@@ -30,6 +30,81 @@ except ImportError:
 class ReportGenerator:
     """Generate HTML/PDF reports from analysis results."""
     
+    # Human-readable metric names for reports
+    METRIC_LABELS = {
+        # Count metrics
+        'n_total': 'Total Deposit Count',
+        'n_normal': 'Number of Normal Deposits',
+        'n_rod': 'Number of RODs',
+        'n_artifact': 'Number of Artifacts',
+        
+        # Fraction/ratio metrics
+        'rod_fraction': 'ROD Fraction (%)',
+        'normal_fraction': 'Normal Fraction (%)',
+        'artifact_fraction': 'Artifact Fraction (%)',
+        
+        # Area metrics
+        'total_area': 'Total Deposit Area (px²)',
+        'mean_area': 'Mean Deposit Area (px²)',
+        'normal_mean_area': 'Mean Normal Deposit Area (px²)',
+        'rod_mean_area': 'Mean ROD Area (px²)',
+        'area_px': 'Deposit Area (px²)',
+        
+        # IOD metrics (Integrated Optical Density)
+        'total_iod': 'Total Integrated Optical Density',
+        'mean_iod': 'Mean Integrated Optical Density',
+        'normal_total_iod': 'Normal Deposits Total IOD',
+        'rod_total_iod': 'ROD Total IOD',
+        'iod': 'Integrated Optical Density (IOD)',
+        
+        # Color metrics
+        'mean_hue': 'Mean Hue (Color)',
+        'mean_saturation': 'Mean Saturation',
+        'mean_brightness': 'Mean Brightness',
+        'mean_red': 'Mean Red Channel',
+        'mean_green': 'Mean Green Channel',
+        'mean_blue': 'Mean Blue Channel',
+        'hue_cv': 'Hue Coefficient of Variation',
+        
+        # Shape metrics
+        'mean_circularity': 'Mean Circularity',
+        'mean_eccentricity': 'Mean Eccentricity',
+        'mean_solidity': 'Mean Solidity',
+        'mean_compactness': 'Mean Compactness',
+        'mean_aspect_ratio': 'Mean Aspect Ratio',
+        'circularity': 'Circularity',
+        'eccentricity': 'Eccentricity',
+        'solidity': 'Solidity',
+        
+        # Density metrics
+        'deposit_density': 'Deposit Density (per unit area)',
+        'coverage_ratio': 'Film Coverage Ratio',
+        'deposits_per_fly': 'Deposits per Fly',
+        
+        # pH metrics
+        'estimated_ph': 'Estimated pH Value',
+        'acidity_index': 'Acidity Index',
+        
+        # Spatial metrics
+        'mean_nnd': 'Mean Nearest Neighbor Distance',
+        'clark_evans_r': 'Clark-Evans R Index',
+        'edge_fraction': 'Edge Fraction',
+        
+        # Texture metrics
+        'contrast': 'Texture Contrast',
+        'homogeneity': 'Texture Homogeneity',
+        'energy': 'Texture Energy',
+        'correlation': 'Texture Correlation',
+    }
+    
+    @classmethod
+    def get_metric_label(cls, metric_name: str) -> str:
+        """Convert metric variable name to human-readable label."""
+        if metric_name in cls.METRIC_LABELS:
+            return cls.METRIC_LABELS[metric_name]
+        # Fallback: convert snake_case to Title Case
+        return metric_name.replace('_', ' ').title()
+    
     def __init__(self, output_dir: Union[str, Path]):
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -393,9 +468,10 @@ class ReportGenerator:
         
         # Group comparison
         if group_by and 'group_comparison' in inline_plots:
+            group_label = self.get_metric_label(group_by)
             html += f'''
     <div class="section">
-        <h2>📈 Condition Comparison ({group_by})</h2>
+        <h2>📈 Condition Comparison ({group_label})</h2>
         <div class="plot-container">
             <img src="data:image/png;base64,{inline_plots['group_comparison']}" alt="Group Comparison">
         </div>
@@ -415,19 +491,134 @@ class ReportGenerator:
                 if 'error' in result:
                     continue
                 
-                html += f'        <h3 style="color:#3949ab; margin-top:20px;">{metric}</h3>\n'
+                # Convert metric name to human-readable label
+                metric_label = self.get_metric_label(metric)
+                html += f'        <h3 style="color:#3949ab; margin-top:20px;">{metric_label}</h3>\n'
                 
                 if 'overall_test' in result:
-                    html += f'''        <p><strong>Test:</strong> {result['overall_test']}</p>
-        <p><strong>p-value:</strong> {result['overall_p_value']:.4f} 
-        {'✅ Significant' if result['overall_significant'] else '❌ Not significant'}</p>
+                    # 3+ groups: Omnibus test + pairwise comparisons
+                    n_groups = result.get('n_groups', 0)
+                    group_names = result.get('group_names', [])
+                    
+                    html += f'''        <div style="background:#f5f5f5; padding:10px; border-radius:5px; margin-bottom:10px;">
+            <p><strong>🔬 Omnibus Test ({n_groups} groups):</strong> {result['overall_test']}</p>
+            <p style="margin-left:20px; color:#666;">
+                <em>Tests whether at least one group differs from the others</em>
+            </p>
+            <p><strong>p-value:</strong> {result['overall_p_value']:.4f} 
+            {'✅ At least one group is different' if result['overall_significant'] else '❌ No overall difference detected'}</p>
+        </div>
+'''
+                    # Show pairwise comparisons if available
+                    pairwise = result.get('pairwise_comparisons', [])
+                    if pairwise:
+                        correction = result.get('correction_method', 'none')
+                        correction_label = f" ({correction.capitalize()} corrected)" if correction != 'none' else ""
+                        
+                        html += f'''        <div style="margin-top:15px;">
+            <p><strong>🔄 Pairwise Comparisons{correction_label}:</strong></p>
+            <p style="margin-left:20px; color:#666; margin-bottom:10px;">
+                <em>Tests which specific group pairs are different</em>
+            </p>
+            <table style="width:100%; border-collapse:collapse; font-size:0.9em;">
+                <thead>
+                    <tr style="background:#e8eaf6;">
+                        <th style="padding:8px; text-align:left; border:1px solid #ddd;">Comparison</th>
+                        <th style="padding:8px; text-align:center; border:1px solid #ddd;">Test</th>
+                        <th style="padding:8px; text-align:center; border:1px solid #ddd;">p-value</th>
+                        <th style="padding:8px; text-align:center; border:1px solid #ddd;">Effect Size</th>
+                        <th style="padding:8px; text-align:center; border:1px solid #ddd;">Result</th>
+                    </tr>
+                </thead>
+                <tbody>
+'''
+                        for pw in pairwise:
+                            if 'error' in pw:
+                                continue
+                            g1 = pw.get('group1_name', '?')
+                            g2 = pw.get('group2_name', '?')
+                            test_name = pw.get('test_name', 'N/A')
+                            
+                            # Use corrected p-value if available
+                            if 'p_value_corrected' in pw:
+                                p_val = pw['p_value_corrected']
+                                is_sig = pw.get('significant_corrected', False)
+                            else:
+                                p_val = pw.get('p_value', 1.0)
+                                is_sig = pw.get('significant', False)
+                            
+                            effect_d = pw.get('cohens_d', 0)
+                            effect_label = pw.get('effect_size', 'N/A')
+                            
+                            sig_icon = '✅' if is_sig else '❌'
+                            row_bg = '#e8f5e9' if is_sig else '#fff'
+                            
+                            html += f'''                    <tr style="background:{row_bg};">
+                        <td style="padding:8px; border:1px solid #ddd;">{g1} vs {g2}</td>
+                        <td style="padding:8px; text-align:center; border:1px solid #ddd;">{test_name}</td>
+                        <td style="padding:8px; text-align:center; border:1px solid #ddd;">{p_val:.4f}</td>
+                        <td style="padding:8px; text-align:center; border:1px solid #ddd;">{effect_d:.2f} ({effect_label})</td>
+                        <td style="padding:8px; text-align:center; border:1px solid #ddd;">{sig_icon}</td>
+                    </tr>
+'''
+                        html += '''                </tbody>
+            </table>
+        </div>
+'''
+                    # Show group statistics summary
+                    group_stats = result.get('group_statistics', {})
+                    if group_stats:
+                        html += '''        <div style="margin-top:15px;">
+            <p><strong>📊 Group Statistics:</strong></p>
+            <table style="width:100%; border-collapse:collapse; font-size:0.9em;">
+                <thead>
+                    <tr style="background:#e8eaf6;">
+                        <th style="padding:8px; text-align:left; border:1px solid #ddd;">Group</th>
+                        <th style="padding:8px; text-align:center; border:1px solid #ddd;">n</th>
+                        <th style="padding:8px; text-align:center; border:1px solid #ddd;">Mean ± SD</th>
+                        <th style="padding:8px; text-align:center; border:1px solid #ddd;">Median</th>
+                        <th style="padding:8px; text-align:center; border:1px solid #ddd;">CV (%)</th>
+                    </tr>
+                </thead>
+                <tbody>
+'''
+                        for gname, gstat in group_stats.items():
+                            mean_val = gstat.get('mean', 0)
+                            std_val = gstat.get('std', 0)
+                            median_val = gstat.get('median', 0)
+                            cv_val = gstat.get('cv', 0)
+                            n_val = gstat.get('n', 0)
+                            
+                            html += f'''                    <tr>
+                        <td style="padding:8px; border:1px solid #ddd;">{gname}</td>
+                        <td style="padding:8px; text-align:center; border:1px solid #ddd;">{n_val}</td>
+                        <td style="padding:8px; text-align:center; border:1px solid #ddd;">{mean_val:.3f} ± {std_val:.3f}</td>
+                        <td style="padding:8px; text-align:center; border:1px solid #ddd;">{median_val:.3f}</td>
+                        <td style="padding:8px; text-align:center; border:1px solid #ddd;">{cv_val:.1f}</td>
+                    </tr>
+'''
+                        html += '''                </tbody>
+            </table>
+        </div>
 '''
                 else:
-                    html += f'''        <p><strong>Test:</strong> {result.get('test_name', 'N/A')}</p>
-        <p><strong>{result.get('group1_name', 'Group1')}:</strong> {result.get('mean1', 0):.3f} ± {result.get('std1', 0):.3f}</p>
-        <p><strong>{result.get('group2_name', 'Group2')}:</strong> {result.get('mean2', 0):.3f} ± {result.get('std2', 0):.3f}</p>
-        <p><strong>p-value:</strong> {result.get('p_value', 0):.4f}</p>
-        <p><strong>Effect size (Cohen's d):</strong> {result.get('cohens_d', 0):.2f} ({result.get('effect_size', 'N/A')})</p>
+                    # 2 groups: Direct comparison
+                    html += f'''        <div style="background:#f5f5f5; padding:10px; border-radius:5px;">
+            <p><strong>🔬 Two-Group Comparison:</strong> {result.get('test_name', 'N/A')}</p>
+            <table style="width:100%; border-collapse:collapse; font-size:0.9em; margin:10px 0;">
+                <tr>
+                    <td style="padding:8px; border:1px solid #ddd;"><strong>{result.get('group1_name', 'Group1')}</strong></td>
+                    <td style="padding:8px; text-align:center; border:1px solid #ddd;">{result.get('mean1', 0):.3f} ± {result.get('std1', 0):.3f}</td>
+                </tr>
+                <tr>
+                    <td style="padding:8px; border:1px solid #ddd;"><strong>{result.get('group2_name', 'Group2')}</strong></td>
+                    <td style="padding:8px; text-align:center; border:1px solid #ddd;">{result.get('mean2', 0):.3f} ± {result.get('std2', 0):.3f}</td>
+                </tr>
+            </table>
+            <p><strong>p-value:</strong> {result.get('p_value', 0):.4f} 
+            {'✅ Significant difference' if result.get('significant', False) else '❌ No significant difference'}</p>
+            <p><strong>Effect size (Cohen's d):</strong> {result.get('cohens_d', 0):.2f} ({result.get('effect_size', 'N/A')})</p>
+        </div>
 '''
             html += '    </div>\n'
         

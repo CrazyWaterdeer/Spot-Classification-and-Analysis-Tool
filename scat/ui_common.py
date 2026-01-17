@@ -30,7 +30,7 @@ class Theme:
     NORMAL = "#4CAF50"         # Green - normal deposits
     NORMAL_DARK = "#388E3C"
     
-    ROD = "#DA4E42"            # Same as primary - ROD deposits  
+    ROD = "#DA4E42"            # Same as primary - RODs  
     ROD_DARK = "#C44539"
     
     ARTIFACT = "#636867"       # Same as secondary - artifacts

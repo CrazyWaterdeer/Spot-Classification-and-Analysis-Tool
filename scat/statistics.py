@@ -1004,7 +1004,7 @@ class pHAnalyzer:
         deposits_df: pd.DataFrame
     ) -> Dict:
         """
-        Compare pH between Normal and ROD deposits.
+        Compare pH between Normal deposits and RODs.
         
         Args:
             deposits_df: DataFrame with individual deposit data
@@ -1469,7 +1469,7 @@ class SizeDistributionAnalyzer:
     
     def compare_size_normal_vs_rod(self, deposits_df: pd.DataFrame, area_column: str = 'area_px') -> Dict:
         """
-        Compare size distribution between Normal and ROD deposits.
+        Compare size distribution between Normal deposits and RODs.
         
         Args:
             deposits_df: DataFrame with deposit data
@@ -2153,7 +2153,7 @@ class CorrelationAnalyzer:
     
     def analyze_correlations_by_type(self, deposits_df: pd.DataFrame) -> Dict:
         """
-        Compare correlations between Normal and ROD deposits.
+        Compare correlations between Normal deposits and RODs.
         
         Args:
             deposits_df: DataFrame with deposit features
@@ -2362,7 +2362,7 @@ class MorphologyAnalyzer:
     
     def compare_morphology_normal_vs_rod(self, deposits_df: pd.DataFrame) -> Dict:
         """
-        Compare morphology between Normal and ROD deposits.
+        Compare morphology between Normal deposits and RODs.
         
         Args:
             deposits_df: DataFrame with deposit features
