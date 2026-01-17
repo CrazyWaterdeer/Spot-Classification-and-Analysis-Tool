@@ -2890,9 +2890,11 @@ class ResultsTab(QWidget):
             # 3. Regenerate HTML report
             from .report import ReportGenerator
             reporter = ReportGenerator(output_dir)
-            reporter.generate(
-                image_summary, deposit_data, 
-                stats_results, viz_results,
+            reporter.generate_html_report(
+                film_summary=image_summary,
+                deposit_data=deposit_data, 
+                statistical_results=stats_results,
+                visualization_paths=viz_results,
                 group_by=self.results.get('group_by')
             )
             
