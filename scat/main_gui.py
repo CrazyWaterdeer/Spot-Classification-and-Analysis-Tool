@@ -1690,7 +1690,7 @@ class AnalysisTab(QWidget):
         default_input = str(Path.home() / "SCAT" / "data" / "images")
         default_output = str(Path.home() / "SCAT" / "data" / "results")
         
-        # Input: Folder selector + Files button
+        # Input: File selector (select one or multiple files)
         input_row = QHBoxLayout()
         input_row.setSpacing(10)
         
@@ -1699,40 +1699,36 @@ class AnalysisTab(QWidget):
         input_label.setStyleSheet(f"font-weight: bold; color: {Theme.TEXT_PRIMARY}; background-color: transparent;")
         
         self.input_path_edit = QLineEdit()
-        self.input_path_edit.setPlaceholderText("Select folder or files...")
+        self.input_path_edit.setPlaceholderText("Select image files...")
+        self.input_path_edit.setReadOnly(True)
         
-        self.browse_folder_btn = QPushButton("Folder...")
-        self.browse_folder_btn.setMinimumWidth(70)
-        self.browse_folder_btn.setToolTip("Select a folder containing images")
-        self.browse_folder_btn.clicked.connect(self._browse_input_folder)
-        
-        self.browse_files_btn = QPushButton("Files...")
-        self.browse_files_btn.setMinimumWidth(70)
-        self.browse_files_btn.setToolTip("Select individual image files")
-        self.browse_files_btn.clicked.connect(self._browse_input_files)
+        self.browse_btn = QPushButton("Browse...")
+        self.browse_btn.setMinimumWidth(80)
+        self.browse_btn.setToolTip("Select one or more image files (Ctrl+A to select all in folder)")
+        self.browse_btn.clicked.connect(self._browse_input)
         
         input_row.addWidget(input_label)
         input_row.addWidget(self.input_path_edit, 1)
-        input_row.addWidget(self.browse_folder_btn)
-        input_row.addWidget(self.browse_files_btn)
+        input_row.addWidget(self.browse_btn)
         
         io_layout.addLayout(input_row)
         
-        # Selected files preview (collapsible)
+        # Files preview (simple list, double-click to remove)
         self.files_preview = QTreeWidget()
-        self.files_preview.setHeaderHidden(True)
-        self.files_preview.setMaximumHeight(120)
-        self.files_preview.setVisible(False)  # Hidden initially
-        self.files_preview.setToolTip("Selected files (double-click to remove)")
-        self.files_preview.itemDoubleClicked.connect(self._remove_selected_file)
+        self.files_preview.setHeaderLabels(["File", "Size"])
+        self.files_preview.setColumnWidth(0, 300)
+        self.files_preview.setMaximumHeight(150)
+        self.files_preview.setVisible(False)
+        self.files_preview.setToolTip("Double-click to remove a file")
+        self.files_preview.itemDoubleClicked.connect(self._remove_file_from_selection)
         io_layout.addWidget(self.files_preview)
         
-        # Load saved input path
+        # Load saved input path and refresh preview
         saved_input = config.get("last_input_dir", "")
-        if saved_input:
+        if saved_input and Path(saved_input).exists():
             self.input_path_edit.setText(saved_input.replace('\\', '/'))
-        elif default_input:
-            self.input_path_edit.setText(default_input.replace('\\', '/'))
+            # Delay preview update until after UI is built
+            QTimer.singleShot(100, self._update_files_preview)
         
         self.output_dir = PathSelector("Output", is_folder=True, config_key="last_output_dir", default_path=default_output)
         self.model_path = PathSelector("Classifier", filter="Model (*.pkl *.pt)", config_key="last_model_path")
@@ -1988,27 +1984,13 @@ class AnalysisTab(QWidget):
             
             self.groups_tree.addTopLevelItem(parent)
     
-    def _browse_input_folder(self):
-        """Browse for input folder."""
-        start_dir = self.input_path_edit.text().replace('/', '\\') or ""
-        path = QFileDialog.getExistingDirectory(self, "Select Image Folder", start_dir)
-        
-        if path:
-            display_path = path.replace('\\', '/')
-            self.input_path_edit.setText(display_path)
-            config.set("last_input_dir", path)
-            
-            # Switch to folder mode
-            self._input_mode = 'folder'
-            self._selected_files.clear()
-            self._update_files_preview()
-    
-    def _browse_input_files(self):
-        """Browse for individual image files."""
-        start_dir = self.input_path_edit.text().replace('/', '\\') or ""
-        if self._input_mode == 'folder' and start_dir:
-            # Start in the currently selected folder
-            pass
+    def _browse_input(self):
+        """Browse for image files (one or multiple)."""
+        start_dir = ""
+        if self._selected_files:
+            start_dir = str(Path(self._selected_files[0]).parent)
+        elif config.get("last_input_dir"):
+            start_dir = config.get("last_input_dir")
         
         files, _ = QFileDialog.getOpenFileNames(
             self, "Select Image Files", start_dir,
@@ -2016,78 +1998,49 @@ class AnalysisTab(QWidget):
         )
         
         if files:
-            # Switch to files mode
-            self._input_mode = 'files'
             self._selected_files = files
-            
-            # Show folder of first file in path edit
-            first_folder = str(Path(files[0]).parent)
-            display_path = f"{first_folder.replace(chr(92), '/')} ({len(files)} files selected)"
-            self.input_path_edit.setText(display_path)
-            
-            # Update preview
+            config.set("last_input_dir", str(Path(files[0]).parent))
             self._update_files_preview()
     
     def _update_files_preview(self):
         """Update the files preview tree."""
         self.files_preview.clear()
         
-        if self._input_mode == 'files' and self._selected_files:
-            self.files_preview.setVisible(True)
-            for f in sorted(self._selected_files):
-                item = QTreeWidgetItem([Path(f).name])
-                item.setData(0, Qt.UserRole, f)  # Store full path
-                self.files_preview.addTopLevelItem(item)
-        else:
+        if not self._selected_files:
             self.files_preview.setVisible(False)
+            self.input_path_edit.clear()
+            return
+        
+        # Show folder path and count
+        folder = Path(self._selected_files[0]).parent
+        count = len(self._selected_files)
+        display_text = f"{str(folder).replace(chr(92), '/')} ({count} file{'s' if count > 1 else ''})"
+        self.input_path_edit.setText(display_text)
+        
+        # Show file list
+        self.files_preview.setVisible(True)
+        for f in sorted(self._selected_files):
+            p = Path(f)
+            try:
+                size_kb = p.stat().st_size / 1024
+                size_str = f"{size_kb:.0f} KB" if size_kb < 1024 else f"{size_kb/1024:.1f} MB"
+            except:
+                size_str = ""
+            
+            item = QTreeWidgetItem([p.name, size_str])
+            item.setData(0, Qt.UserRole, f)
+            self.files_preview.addTopLevelItem(item)
     
-    def _remove_selected_file(self, item, column):
+    def _remove_file_from_selection(self, item, column):
         """Remove a file from selection (double-click handler)."""
-        if self._input_mode == 'files':
-            full_path = item.data(0, Qt.UserRole)
-            if full_path in self._selected_files:
-                self._selected_files.remove(full_path)
-                self._update_files_preview()
-                
-                # Update path display
-                if self._selected_files:
-                    first_folder = str(Path(self._selected_files[0]).parent)
-                    display_path = f"{first_folder.replace(chr(92), '/')} ({len(self._selected_files)} files selected)"
-                    self.input_path_edit.setText(display_path)
-                else:
-                    self.input_path_edit.clear()
-                    self._input_mode = 'folder'
+        full_path = item.data(0, Qt.UserRole)
+        if full_path in self._selected_files:
+            self._selected_files.remove(full_path)
+            self._update_files_preview()
     
     def _get_image_files(self) -> List[Path]:
-        """Get list of image files based on current input mode."""
-        image_extensions = ['.tif', '.tiff', '.png', '.jpg', '.jpeg']
-        
-        if self._input_mode == 'files' and self._selected_files:
-            # Return selected files
-            return [Path(f) for f in self._selected_files]
-        else:
-            # Get files from folder
-            input_text = self.input_path_edit.text()
-            # Remove file count suffix if present
-            if ' (' in input_text and ' files selected)' in input_text:
-                input_text = input_text.split(' (')[0]
-            
-            input_path = Path(input_text.replace('/', '\\') if sys.platform == 'win32' else input_text)
-            
-            if not input_path.exists() or not input_path.is_dir():
-                return []
-            
-            # Use lowercase extension check to avoid duplicates
-            files = []
-            seen = set()
-            for f in input_path.iterdir():
-                if f.is_file() and f.suffix.lower() in image_extensions:
-                    key = f.name.lower()
-                    if key not in seen:
-                        seen.add(key)
-                        files.append(f)
-            
-            return sorted(files)
+        """Get list of selected image files."""
+        return [Path(f) for f in self._selected_files]
     
     def _open_group_editor(self):
         """Open the group editor dialog to create metadata."""
@@ -2133,7 +2086,7 @@ class AnalysisTab(QWidget):
         output_base = self.output_dir.path()
         
         if not image_files:
-            QMessageBox.warning(self, "Error", "Please select input folder or files")
+            QMessageBox.warning(self, "Error", "Please select image files")
             return
         
         if not output_base:
