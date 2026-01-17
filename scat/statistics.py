@@ -6,7 +6,7 @@ Supports multi-group analysis with control/treatment designation.
 
 import numpy as np
 import pandas as pd
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple
 from itertools import combinations
 
 # scipy is imported lazily when needed

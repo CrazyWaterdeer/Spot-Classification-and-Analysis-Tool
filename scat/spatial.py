@@ -4,9 +4,8 @@ Analyzes deposit distribution patterns on films.
 """
 
 import numpy as np
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple
 from dataclasses import dataclass
-import cv2
 
 from .detector import Deposit
 

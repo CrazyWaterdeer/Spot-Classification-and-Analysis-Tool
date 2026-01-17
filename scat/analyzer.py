@@ -13,7 +13,7 @@ import cv2
 
 from .detector import DepositDetector, Deposit
 from .features import FeatureExtractor
-from .classifier import ThresholdClassifier, get_classifier, ClassifierConfig
+from .classifier import get_classifier, ClassifierConfig
 
 
 class AnalysisResult:

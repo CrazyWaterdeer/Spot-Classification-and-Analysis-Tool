@@ -8,7 +8,6 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple, Union
-import warnings
 
 # =============================================================================
 # Color Palettes

@@ -6,7 +6,7 @@ Generates HTML and PDF reports from analysis results.
 import base64
 from pathlib import Path
 from datetime import datetime
-from typing import List, Dict, Optional, Union
+from typing import List, Dict, Optional
 import numpy as np
 import pandas as pd
 from io import BytesIO

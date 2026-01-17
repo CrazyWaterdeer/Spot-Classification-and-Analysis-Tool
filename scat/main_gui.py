@@ -10,7 +10,6 @@ import json
 from pathlib import Path
 from typing import Optional, Dict, List
 import numpy as np
-import pandas as pd
 import cv2
 
 from PySide6.QtWidgets import (
@@ -20,15 +19,13 @@ from PySide6.QtWidgets import (
     QProgressBar, QTextEdit, QTableWidget, QTableWidgetItem,
     QHeaderView, QSplitter, QLineEdit, QMessageBox, QScrollArea,
     QDialog, QKeySequenceEdit, QDialogButtonBox,
-    QGraphicsView, QGraphicsScene, QGraphicsPathItem,
-    QListWidget, QMenu, QRadioButton, QTreeWidget, QTreeWidgetItem,
-    QFrame
+    QGraphicsView, QGraphicsScene, QListWidget, QMenu, 
+    QRadioButton, QTreeWidget, QTreeWidgetItem, QFrame
 )
-from PySide6.QtCore import Qt, QThread, Signal, QSize, QRectF, QTimer
+from PySide6.QtCore import Qt, QThread, Signal, QSize, QTimer
 from PySide6.QtGui import (
-    QFont, QPixmap, QImage, QIcon, QKeySequence, QPainter, 
-    QPen, QColor, QBrush, QShortcut, QPalette, QWheelEvent,
-    QFontDatabase
+    QFont, QPixmap, QImage, QIcon, QKeySequence, 
+    QColor, QShortcut, QWheelEvent, QFontDatabase
 )
 
 # Import SCAT modules
