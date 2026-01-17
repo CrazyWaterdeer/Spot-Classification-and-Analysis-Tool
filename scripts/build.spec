@@ -19,6 +19,7 @@ a = Analysis(
     binaries=[],
     datas=[
         (str(PROJECT_ROOT / 'scat' / 'resources' / 'icon.ico'), 'scat/resources'),
+        (str(PROJECT_ROOT / 'scat' / 'resources' / 'fonts'), 'scat/resources/fonts'),
     ],
     hiddenimports=[
         'scat',

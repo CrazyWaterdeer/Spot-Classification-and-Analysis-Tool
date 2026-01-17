@@ -90,7 +90,7 @@ class Theme:
     # Background layers (very dark, almost black)
     BG_DARKEST = "#0A0A0A"     # Main window background
     BG_DARK = "#121212"        # Card/group background
-    BG_MEDIUM = "#1A1A1A"      # Input field background
+    BG_MEDIUM = "#101010"      # Input field background
     BG_LIGHT = "#242424"       # Hover state
     BG_LIGHTER = "#2E2E2E"     # Active/pressed state
     
@@ -132,8 +132,6 @@ class Theme:
     @staticmethod
     def get_app_stylesheet() -> str:
         """Return the complete application stylesheet."""
-        # Get resources path for images
-        resources_path = str(Path(__file__).parent / "resources").replace("\\", "/")
         return f"""
             /* Main Window */
             QMainWindow, QDialog {{
@@ -215,7 +213,7 @@ class Theme:
             
             /* Input Fields - background matches surroundings */
             QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox {{
-                background-color: {Theme.BG_DARK};
+                background-color: {Theme.BG_MEDIUM};
                 border: 1px solid {Theme.BORDER};
                 border-radius: 5px;
                 padding: 8px 10px;
@@ -241,38 +239,6 @@ class Theme:
                 border: 1px solid {Theme.BORDER};
                 selection-background-color: {Theme.SECONDARY};
                 padding: 4px;
-            }}
-            
-            /* SpinBox buttons - clean chevron arrows */
-            QSpinBox::up-button, QDoubleSpinBox::up-button {{
-                subcontrol-origin: border;
-                subcontrol-position: top right;
-                width: 20px;
-                border: none;
-                background-color: transparent;
-                margin-right: 2px;
-            }}
-            QSpinBox::down-button, QDoubleSpinBox::down-button {{
-                subcontrol-origin: border;
-                subcontrol-position: bottom right;
-                width: 20px;
-                border: none;
-                background-color: transparent;
-                margin-right: 2px;
-            }}
-            QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover,
-            QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover {{
-                background-color: {Theme.BG_LIGHT};
-            }}
-            QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {{
-                image: url({resources_path}/Chevron-up.svg);
-                width: 10px;
-                height: 10px;
-            }}
-            QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {{
-                image: url({resources_path}/Chevron-down.svg);
-                width: 10px;
-                height: 10px;
             }}
             
             /* Labels - no background, bold for form labels */
@@ -303,6 +269,11 @@ class Theme:
                 border: none;
                 border-bottom: 1px solid {Theme.BORDER};
                 font-weight: bold;
+            }}
+            QTableCornerButton::section {{
+                background-color: {Theme.BG_DARK};
+                border: none;
+                border-bottom: 1px solid {Theme.BORDER};
             }}
             
             /* List Widget */
@@ -942,7 +913,7 @@ class TrainingTab(QWidget):
         
         # Scroll content widget
         scroll_content = QWidget()
-        scroll_content.setStyleSheet(f"background-color: {Theme.BG_MEDIUM};")
+        scroll_content.setStyleSheet(f"background-color: {Theme.BG_DARKEST};")
         layout = QVBoxLayout(scroll_content)
         layout.setSpacing(15)
         layout.setContentsMargins(15, 15, 15, 15)
@@ -983,17 +954,20 @@ class TrainingTab(QWidget):
         self.n_estimators = NoScrollSpinBox()
         self.n_estimators.setRange(10, 1000)
         self.n_estimators.setValue(config.get("training.n_estimators", 100))
+        self.n_estimators.setButtonSymbols(QSpinBox.NoButtons)
         model_layout.addRow("RF Trees:", self.n_estimators)
         
         self.epochs = NoScrollSpinBox()
         self.epochs.setRange(1, 100)
         self.epochs.setValue(config.get("training.epochs", 20))
+        self.epochs.setButtonSymbols(QSpinBox.NoButtons)
         model_layout.addRow("CNN/U-Net Epochs:", self.epochs)
         
         self.image_size = NoScrollSpinBox()
         self.image_size.setRange(128, 512)
         self.image_size.setValue(256)
         self.image_size.setSingleStep(64)
+        self.image_size.setButtonSymbols(QSpinBox.NoButtons)
         model_layout.addRow("U-Net Image Size:", self.image_size)
         
         model_group.setLayout(model_layout)
@@ -1682,7 +1656,7 @@ class AnalysisTab(QWidget):
         
         # Container widget for scroll area content
         scroll_content = QWidget()
-        scroll_content.setStyleSheet(f"background-color: {Theme.BG_MEDIUM};")
+        scroll_content.setStyleSheet(f"background-color: {Theme.BG_DARKEST};")
         layout = QVBoxLayout(scroll_content)
         layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(6)
@@ -1813,7 +1787,9 @@ class AnalysisTab(QWidget):
         self.model_type.addItems(["Threshold", "Random Forest", "CNN"])
         model_type_map = {"threshold": 0, "rf": 1, "cnn": 2}
         self.model_type.setCurrentIndex(model_type_map.get(config.get("analysis.model_type", "rf"), 1))
-        options_layout.addRow("Classifier", self.model_type)
+        classifier_label = QLabel("Classifier")
+        classifier_label.setStyleSheet("background-color: transparent;")
+        options_layout.addRow(classifier_label, self.model_type)
         
         # Report-related options (disabled in Quick mode)
         self.annotate = QCheckBox("Generate annotated images")
@@ -1858,17 +1834,20 @@ class AnalysisTab(QWidget):
         self.min_area = NoScrollSpinBox()
         self.min_area.setRange(1, 1000)
         self.min_area.setValue(config.get("detection.min_area", 20))
+        self.min_area.setButtonSymbols(QSpinBox.NoButtons)
         detect_layout.addRow("Min Area", self.min_area)
         
         self.max_area = NoScrollSpinBox()
         self.max_area.setRange(100, 50000)
         self.max_area.setValue(config.get("detection.max_area", 10000))
+        self.max_area.setButtonSymbols(QSpinBox.NoButtons)
         detect_layout.addRow("Max Area", self.max_area)
         
         self.threshold = NoScrollDoubleSpinBox()
         self.threshold.setRange(0.1, 1.0)
         self.threshold.setSingleStep(0.05)
         self.threshold.setValue(config.get("detection.threshold", 0.6))
+        self.threshold.setButtonSymbols(QDoubleSpinBox.NoButtons)
         detect_layout.addRow("Circularity", self.threshold)
         
         detect_group.setLayout(detect_layout)

@@ -57,7 +57,7 @@ class Theme:
     
     BG_DARKEST = "#0A0A0A"   # Main background
     BG_DARK = "#121212"      # Card/panel background
-    BG_MEDIUM = "#1A1A1A"    # Input fields
+    BG_MEDIUM = "#101010"    # Input fields
     BG_LIGHT = "#242424"     # Buttons, hover states
     
     TEXT_PRIMARY = "#E0E0E0"
@@ -76,8 +76,6 @@ class Theme:
     
     @classmethod
     def get_stylesheet(cls) -> str:
-        # Get resources path for images
-        resources_path = str(Path(__file__).parent / "resources").replace("\\", "/")
         return f"""
             QMainWindow, QWidget {{
                 background-color: {cls.BG_DARKEST};
@@ -123,34 +121,6 @@ class Theme:
             }}
             QSpinBox:focus, QDoubleSpinBox:focus {{
                 border-color: {cls.PRIMARY};
-            }}
-            QSpinBox::up-button, QDoubleSpinBox::up-button {{
-                subcontrol-origin: border;
-                subcontrol-position: top right;
-                width: 18px;
-                border: none;
-                background-color: transparent;
-            }}
-            QSpinBox::down-button, QDoubleSpinBox::down-button {{
-                subcontrol-origin: border;
-                subcontrol-position: bottom right;
-                width: 18px;
-                border: none;
-                background-color: transparent;
-            }}
-            QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover,
-            QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover {{
-                background-color: {cls.BG_LIGHT};
-            }}
-            QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {{
-                image: url({resources_path}/Chevron-up.svg);
-                width: 10px;
-                height: 10px;
-            }}
-            QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {{
-                image: url({resources_path}/Chevron-down.svg);
-                width: 10px;
-                height: 10px;
             }}
             QTableWidget {{
                 background-color: {cls.BG_DARK};
@@ -792,6 +762,7 @@ class LabelingWindow(QMainWindow):
         shape_layout.setContentsMargins(20, 0, 0, 0)  # Indent
         shape_label = QLabel("Shape:")
         shape_label.setFixedWidth(45)
+        shape_label.setStyleSheet("background-color: transparent;")
         self.add_shape_combo = QComboBox()
         self.add_shape_combo.addItems(["Rectangle", "Circle", "Freeform", "Manual"])
         self.add_shape_combo.setCurrentIndex(config.get("labeling.add_shape", 0))
@@ -907,16 +878,38 @@ class LabelingWindow(QMainWindow):
         # Statistics
         stats_group = QGroupBox("Statistics")
         stats_layout = QFormLayout()
-        self.label_total = QLabel("0")
-        self.label_normal = QLabel("0")
-        self.label_rod = QLabel("0")
-        self.label_artifact = QLabel("0")
-        self.label_unknown = QLabel("0")
-        stats_layout.addRow("Total:", self.label_total)
-        stats_layout.addRow("Normal:", self.label_normal)
-        stats_layout.addRow("ROD:", self.label_rod)
-        stats_layout.addRow("Artifact:", self.label_artifact)
-        stats_layout.addRow("Unlabeled:", self.label_unknown)
+        stats_layout.setHorizontalSpacing(15)  # Increase spacing between label and value
+        
+        # Style for row labels (transparent background, center aligned)
+        label_style = "background-color: transparent;"
+        # Style for value labels (rounded dark background)
+        value_style = f"""
+            background-color: {Theme.BG_MEDIUM};
+            border-radius: 4px;
+            padding: 4px 8px;
+            min-width: 40px;
+        """
+        
+        def create_stat_row(text):
+            label = QLabel(text)
+            label.setStyleSheet(label_style)
+            label.setAlignment(Qt.AlignCenter)
+            value = QLabel("0")
+            value.setStyleSheet(value_style)
+            value.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            return label, value
+        
+        total_label, self.label_total = create_stat_row("Total")
+        normal_label, self.label_normal = create_stat_row("Normal")
+        rod_label, self.label_rod = create_stat_row("ROD")
+        artifact_label, self.label_artifact = create_stat_row("Artifact")
+        unlabeled_label, self.label_unknown = create_stat_row("Unlabeled")
+        
+        stats_layout.addRow(total_label, self.label_total)
+        stats_layout.addRow(normal_label, self.label_normal)
+        stats_layout.addRow(rod_label, self.label_rod)
+        stats_layout.addRow(artifact_label, self.label_artifact)
+        stats_layout.addRow(unlabeled_label, self.label_unknown)
         stats_group.setLayout(stats_layout)
         right_layout.addWidget(stats_group)
         
