@@ -19,179 +19,17 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QRectF, QTimer, Signal
 from PySide6.QtGui import (
     QImage, QPixmap, QPainter, QPen, QColor, QBrush, 
-    QPainterPath, QAction, QShortcut, QKeySequence, QWheelEvent,
+    QPainterPath, QAction, QShortcut, QKeySequence,
     QFont, QFontDatabase
 )
 
 from .detector import DepositDetector, Deposit
 from .features import FeatureExtractor
 from .config import config
-
-
-# =============================================================================
-# Custom Table Item for Numeric Sorting
-# =============================================================================
-class NumericTableWidgetItem(QTableWidgetItem):
-    """QTableWidgetItem that sorts numerically instead of alphabetically."""
-    
-    def __init__(self, value, display_format: str = None):
-        if display_format:
-            super().__init__(display_format.format(value))
-        else:
-            super().__init__(str(value))
-        self._value = value
-    
-    def __lt__(self, other):
-        if isinstance(other, NumericTableWidgetItem):
-            return self._value < other._value
-        return super().__lt__(other)
-
-
-# =============================================================================
-# Theme - Dark mode colors (matching main_gui.py)
-# =============================================================================
-class Theme:
-    """Dark theme colors - DIC microscopy palette."""
-    PRIMARY = "#DA4E42"      # DIC2497 - Main accent (red-orange)
-    SECONDARY = "#636867"    # DIC540 - Secondary (gray-green)
-    
-    BG_DARKEST = "#0A0A0A"   # Main background
-    BG_DARK = "#121212"      # Card/panel background
-    BG_MEDIUM = "#101010"    # Input fields
-    BG_LIGHT = "#242424"     # Buttons, hover states
-    
-    TEXT_PRIMARY = "#E0E0E0"
-    TEXT_SECONDARY = "#A0A0A0"
-    TEXT_MUTED = "#666666"
-    
-    BORDER = "#2A2A2A"
-    
-    # Deposit colors
-    NORMAL = "#4CAF50"
-    NORMAL_DARK = "#388E3C"
-    ROD = "#F44336"
-    ROD_DARK = "#D32F2F"
-    ARTIFACT = "#9E9E9E"
-    ARTIFACT_DARK = "#757575"
-    
-    @classmethod
-    def get_stylesheet(cls) -> str:
-        return f"""
-            QMainWindow, QWidget {{
-                background-color: {cls.BG_DARKEST};
-                color: {cls.TEXT_PRIMARY};
-            }}
-            QGroupBox {{
-                font-weight: bold;
-                border: 1px solid {cls.BORDER};
-                border-radius: 6px;
-                margin-top: 16px;
-                padding-top: 16px;
-                background-color: {cls.BG_DARK};
-            }}
-            QGroupBox::title {{
-                subcontrol-origin: margin;
-                left: 10px;
-                padding: 0 8px;
-                color: {cls.PRIMARY};
-                background-color: transparent;
-            }}
-            QPushButton {{
-                background-color: {cls.BG_LIGHT};
-                border: 1px solid {cls.BORDER};
-                border-radius: 4px;
-                padding: 6px 12px;
-                min-height: 24px;
-                color: {cls.TEXT_PRIMARY};
-                font-weight: bold;
-            }}
-            QPushButton:hover {{
-                background-color: {cls.SECONDARY};
-            }}
-            QPushButton:pressed {{
-                background-color: {cls.PRIMARY};
-            }}
-            QSpinBox, QDoubleSpinBox {{
-                background-color: {cls.BG_DARK};
-                border: 1px solid {cls.BORDER};
-                border-radius: 4px;
-                padding: 4px 8px;
-                min-height: 20px;
-                color: {cls.TEXT_PRIMARY};
-            }}
-            QSpinBox:focus, QDoubleSpinBox:focus {{
-                border-color: {cls.PRIMARY};
-            }}
-            QTableWidget {{
-                background-color: {cls.BG_DARK};
-                border: 1px solid {cls.BORDER};
-                gridline-color: {cls.BORDER};
-                color: {cls.TEXT_PRIMARY};
-            }}
-            QTableWidget::item:selected {{
-                background-color: {cls.SECONDARY};
-            }}
-            QHeaderView::section {{
-                background-color: {cls.BG_DARK};
-                color: {cls.TEXT_PRIMARY};
-                padding: 6px;
-                border: none;
-                border-bottom: 1px solid {cls.BORDER};
-                font-weight: bold;
-            }}
-            QRadioButton {{
-                color: {cls.TEXT_PRIMARY};
-                spacing: 8px;
-                padding: 6px 12px;
-                border-radius: 4px;
-                background-color: {cls.BG_DARK};
-            }}
-            QRadioButton:hover {{
-                border: 1px solid {cls.SECONDARY};
-                background-color: {cls.BG_LIGHT};
-            }}
-            QRadioButton:checked {{
-                background-color: {cls.PRIMARY};
-                color: white;
-                font-weight: bold;
-            }}
-            QRadioButton::indicator {{
-                width: 0px;
-                height: 0px;
-            }}
-            QLabel {{
-                color: {cls.TEXT_PRIMARY};
-                font-weight: bold;
-            }}
-            QScrollArea {{
-                border: none;
-                background-color: transparent;
-            }}
-            QToolBar {{
-                background-color: {cls.BG_DARK};
-                border-bottom: 1px solid {cls.BORDER};
-                spacing: 4px;
-                padding: 4px;
-            }}
-            QSplitter::handle {{
-                background-color: {cls.BORDER};
-            }}
-        """
-
-
-# =============================================================================
-# Custom Widgets - SpinBox without scroll wheel
-# =============================================================================
-class NoScrollSpinBox(QSpinBox):
-    """SpinBox that ignores wheel events to prevent accidental value changes."""
-    def wheelEvent(self, event: QWheelEvent):
-        event.ignore()
-
-
-class NoScrollDoubleSpinBox(QDoubleSpinBox):
-    """DoubleSpinBox that ignores wheel events."""
-    def wheelEvent(self, event: QWheelEvent):
-        event.ignore()
+from .ui_common import (
+    Theme, NoScrollSpinBox, NoScrollDoubleSpinBox, NumericTableWidgetItem,
+    load_custom_fonts
+)
 
 
 class DepositGraphicsItem(QGraphicsPathItem):
@@ -676,7 +514,7 @@ class LabelingWindow(QMainWindow):
         self.setMinimumSize(1200, 800)
         
         # Apply dark theme
-        self.setStyleSheet(Theme.get_stylesheet())
+        self.setStyleSheet(Theme.get_labeling_stylesheet())
         
         self.image: Optional[np.ndarray] = None
         self.deposits: List[Deposit] = []
@@ -2022,22 +1860,11 @@ class LabelingWindow(QMainWindow):
         self.close()
 
 
-def _load_custom_fonts():
-    """Load custom fonts bundled with the application."""
-    fonts_dir = Path(__file__).parent / "resources" / "fonts"
-    
-    if fonts_dir.exists():
-        for font_file in fonts_dir.glob("*.ttf"):
-            font_id = QFontDatabase.addApplicationFont(str(font_file))
-            if font_id < 0:
-                print(f"Warning: Failed to load font {font_file.name}")
-
-
 def run_labeling_gui():
     app = QApplication(sys.argv)
     
     # Load custom fonts (Noto Sans)
-    _load_custom_fonts()
+    load_custom_fonts()
     
     # Set application-wide font
     app_font = QFont("Noto Sans", 10)
