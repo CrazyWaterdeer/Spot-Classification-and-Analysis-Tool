@@ -503,7 +503,7 @@ class TrainingTab(QWidget):
         
         # Scroll content widget
         scroll_content = QWidget()
-        scroll_content.setStyleSheet(f"background-color: {Theme.BG_DARKEST};")
+        scroll_content.setObjectName("scrollContent")
         layout = QVBoxLayout(scroll_content)
         layout.setSpacing(15)
         layout.setContentsMargins(15, 15, 15, 15)
@@ -1246,7 +1246,7 @@ class AnalysisTab(QWidget):
         
         # Container widget for scroll area content
         scroll_content = QWidget()
-        scroll_content.setStyleSheet(f"background-color: {Theme.BG_DARKEST};")
+        scroll_content.setObjectName("scrollContent")
         layout = QVBoxLayout(scroll_content)
         layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(6)

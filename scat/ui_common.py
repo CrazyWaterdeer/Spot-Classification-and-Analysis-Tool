@@ -7,6 +7,7 @@ from pathlib import Path
 
 from PySide6.QtWidgets import QSpinBox, QDoubleSpinBox, QComboBox, QTableWidgetItem
 from PySide6.QtGui import QWheelEvent, QFontDatabase
+from PySide6.QtCore import Qt
 
 
 # =============================================================================
@@ -85,25 +86,28 @@ class Theme:
     @classmethod
     def get_app_stylesheet(cls) -> str:
         """Return the complete application stylesheet for main_gui."""
-        if cls._cached_app_stylesheet is None:
-            cls._cached_app_stylesheet = f"""
+        # Always regenerate (remove caching for debugging)
+        cls._cached_app_stylesheet = f"""
             /* Main Window */
-            QMainWindow, QDialog {{
+            QMainWindow {{
+                background-color: {cls.BG_DARKEST};
+                color: {cls.TEXT_PRIMARY};
+            }}
+            QDialog {{
                 background-color: {cls.BG_DARKEST};
                 color: {cls.TEXT_PRIMARY};
             }}
             
-            /* Widgets */
-            QWidget {{
+            /* Scroll content area - dark background */
+            QWidget#scrollContent {{
                 background-color: {cls.BG_DARKEST};
-                color: {cls.TEXT_PRIMARY};
             }}
             
             /* Tab Widget */
             QTabWidget::pane {{
                 border: 1px solid {cls.BORDER};
                 border-radius: 5px;
-                background-color: {cls.BG_DARK};
+                background-color: {cls.BG_DARKEST};
                 margin-top: -1px;
             }}
             QTabBar::tab {{
@@ -140,8 +144,18 @@ class Theme:
                 top: 6px;
                 padding: 2px 10px;
                 color: {cls.PRIMARY};
-                background-color: transparent;
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 rgba(10, 10, 10, 255),
+                    stop:0.55 rgba(10, 10, 10, 255),
+                    stop:0.65 rgba(18, 18, 18, 255),
+                    stop:1 rgba(18, 18, 18, 255));
                 font-size: 13px;
+            }}
+            
+            /* Scroll Area */
+            QScrollArea {{
+                background-color: transparent;
+                border: none;
             }}
             
             /* Buttons - Secondary (gray) by default with visible background */
@@ -166,7 +180,7 @@ class Theme:
             }}
             
             /* Input Fields - background matches surroundings */
-            QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox {{
+            QLineEdit, QSpinBox, QDoubleSpinBox {{
                 background-color: {cls.BG_MEDIUM};
                 border: 1px solid {cls.BORDER};
                 border-radius: 5px;
@@ -175,7 +189,21 @@ class Theme:
                 min-height: 20px;
                 selection-background-color: {cls.SECONDARY};
             }}
-            QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus {{
+            QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus {{
+                border-color: {cls.PRIMARY};
+            }}
+            
+            /* ComboBox - separate styling */
+            QComboBox {{
+                background-color: {cls.BG_MEDIUM};
+                border: 1px solid {cls.BORDER};
+                border-radius: 5px;
+                padding: 8px 10px;
+                color: {cls.TEXT_PRIMARY};
+                min-height: 20px;
+                selection-background-color: {cls.SECONDARY};
+            }}
+            QComboBox:focus {{
                 border-color: {cls.PRIMARY};
             }}
             QComboBox::drop-down {{
@@ -193,6 +221,14 @@ class Theme:
                 border: 1px solid {cls.BORDER};
                 selection-background-color: {cls.SECONDARY};
                 padding: 4px;
+                outline: none;
+            }}
+            QComboBox QAbstractItemView::item {{
+                padding: 6px 10px;
+                min-height: 24px;
+            }}
+            QComboBox QAbstractItemView::item:selected {{
+                background-color: {cls.SECONDARY};
             }}
             
             /* Labels - no background, bold for form labels */
@@ -397,7 +433,7 @@ class Theme:
         """Return the stylesheet for labeling_gui (simplified version)."""
         if cls._cached_labeling_stylesheet is None:
             cls._cached_labeling_stylesheet = f"""
-            QMainWindow, QWidget {{
+            QMainWindow {{
                 background-color: {cls.BG_DARKEST};
                 color: {cls.TEXT_PRIMARY};
             }}
@@ -414,7 +450,11 @@ class Theme:
                 left: 10px;
                 padding: 0 8px;
                 color: {cls.PRIMARY};
-                background-color: transparent;
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 rgba(10, 10, 10, 255),
+                    stop:0.55 rgba(10, 10, 10, 255),
+                    stop:0.65 rgba(18, 18, 18, 255),
+                    stop:1 rgba(18, 18, 18, 255));
             }}
             QPushButton {{
                 background-color: {cls.BG_LIGHT};
@@ -557,9 +597,26 @@ class NoScrollDoubleSpinBox(QDoubleSpinBox):
 
 
 class NoScrollComboBox(QComboBox):
-    """ComboBox that ignores mouse wheel events."""
+    """ComboBox that ignores mouse wheel events and always drops down below."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        # Force popup to always appear below the combobox
+        self.view().window().setWindowFlags(
+            Qt.Popup | Qt.FramelessWindowHint | Qt.NoDropShadowWindowHint
+        )
+    
     def wheelEvent(self, event: QWheelEvent):
         event.ignore()
+    
+    def showPopup(self):
+        """Override to ensure dropdown always appears below."""
+        # Call parent showPopup first
+        super().showPopup()
+        
+        # Get the popup and move it below the combobox
+        popup = self.view().window()
+        pos = self.mapToGlobal(self.rect().bottomLeft())
+        popup.move(pos)
 
 
 class NumericTableWidgetItem(QTableWidgetItem):
