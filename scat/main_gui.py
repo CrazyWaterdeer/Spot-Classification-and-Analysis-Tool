@@ -2562,7 +2562,13 @@ class ResultsTab(QWidget):
         """Generate group comparison statistics."""
         text = ""
         
+        if not isinstance(stats_results, dict):
+            return text
+        
         for metric, result in stats_results.items():
+            # Skip if result is not a dict
+            if not isinstance(result, dict):
+                continue
             if 'error' in result:
                 text += f"<p><b>{metric}:</b> {result['error']}</p>"
                 continue
@@ -2893,7 +2899,7 @@ class ResultsTab(QWidget):
             reporter.generate_html_report(
                 film_summary=image_summary,
                 deposit_data=deposit_data, 
-                statistical_results=stats_results,
+                statistical_results=stats_results.get('metrics', {}),
                 visualization_paths=viz_results,
                 group_by=self.results.get('group_by')
             )

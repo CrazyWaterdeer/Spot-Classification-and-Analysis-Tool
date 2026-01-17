@@ -86,17 +86,26 @@ class ReportGenerator:
     
     def _calculate_summary(self, film_summary: pd.DataFrame) -> Dict:
         """Calculate overall summary statistics."""
+        def safe_sum(col):
+            return int(film_summary[col].sum()) if col in film_summary.columns else 0
+        
+        def safe_mean(col):
+            return float(film_summary[col].mean()) if col in film_summary.columns else 0.0
+        
+        def safe_std(col):
+            return float(film_summary[col].std()) if col in film_summary.columns else 0.0
+        
         return {
             'total_films': len(film_summary),
-            'total_deposits': int(film_summary['n_total'].sum()),
-            'total_normal': int(film_summary['n_normal'].sum()),
-            'total_rod': int(film_summary['n_rod'].sum()),
-            'total_artifact': int(film_summary['n_artifact'].sum()),
-            'mean_rod_fraction': float(film_summary['rod_fraction'].mean()),
-            'std_rod_fraction': float(film_summary['rod_fraction'].std()),
-            'mean_total_iod': float(film_summary['total_iod'].mean()) if 'total_iod' in film_summary.columns else 0,
-            'mean_normal_area': float(film_summary['normal_mean_area'].mean()) if 'normal_mean_area' in film_summary.columns else 0,
-            'mean_rod_area': float(film_summary['rod_mean_area'].mean()) if 'rod_mean_area' in film_summary.columns else 0,
+            'total_deposits': safe_sum('n_total'),
+            'total_normal': safe_sum('n_normal'),
+            'total_rod': safe_sum('n_rod'),
+            'total_artifact': safe_sum('n_artifact'),
+            'mean_rod_fraction': safe_mean('rod_fraction'),
+            'std_rod_fraction': safe_std('rod_fraction'),
+            'mean_total_iod': safe_mean('total_iod'),
+            'mean_normal_area': safe_mean('normal_mean_area'),
+            'mean_rod_area': safe_mean('rod_mean_area'),
             'generated_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         }
     
@@ -104,10 +113,13 @@ class ReportGenerator:
         """Generate overview bar chart as base64."""
         fig, ax = plt.subplots(figsize=(8, 4))
         
+        def safe_sum(col):
+            return film_summary[col].sum() if col in film_summary.columns else 0
+        
         totals = {
-            'Normal': film_summary['n_normal'].sum(),
-            'ROD': film_summary['n_rod'].sum(),
-            'Artifact': film_summary['n_artifact'].sum()
+            'Normal': safe_sum('n_normal'),
+            'ROD': safe_sum('n_rod'),
+            'Artifact': safe_sum('n_artifact')
         }
         
         colors = ['#4CAF50', '#F44336', '#9E9E9E']
@@ -384,12 +396,15 @@ class ReportGenerator:
 '''
         
         # Statistical results
-        if statistical_results:
+        if statistical_results and isinstance(statistical_results, dict):
             html += '''
     <div class="section">
         <h2>📉 Statistical Analysis</h2>
 '''
             for metric, result in statistical_results.items():
+                # Skip if result is not a dict or has error
+                if not isinstance(result, dict):
+                    continue
                 if 'error' in result:
                     continue
                 
@@ -457,13 +472,19 @@ class ReportGenerator:
                 <tbody>
 '''
         for _, row in film_summary.iterrows():
+            n_normal = int(row.get('n_normal', 0)) if 'n_normal' in row.index else 0
+            n_rod = int(row.get('n_rod', 0)) if 'n_rod' in row.index else 0
+            n_artifact = int(row.get('n_artifact', 0)) if 'n_artifact' in row.index else 0
+            rod_fraction = row.get('rod_fraction', 0) if 'rod_fraction' in row.index else 0
+            total_iod = row.get('total_iod', 0) if 'total_iod' in row.index else 0
+            
             html += f'''                    <tr>
-                        <td>{row['filename']}</td>
-                        <td>{int(row['n_normal'])}</td>
-                        <td>{int(row['n_rod'])}</td>
-                        <td>{int(row['n_artifact'])}</td>
-                        <td>{row['rod_fraction']*100:.1f}%</td>
-                        <td>{row.get('total_iod', 0):.0f}</td>
+                        <td>{row.get('filename', 'N/A')}</td>
+                        <td>{n_normal}</td>
+                        <td>{n_rod}</td>
+                        <td>{n_artifact}</td>
+                        <td>{rod_fraction*100:.1f}%</td>
+                        <td>{total_iod:.0f}</td>
                     </tr>
 '''
         
