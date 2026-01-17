@@ -400,6 +400,11 @@ class ImageViewer(QGraphicsView):
         self.scale(factor, factor)
     
     def mousePressEvent(self, event):
+        # Space bar temporary pan mode - let Qt handle pan
+        if self._space_pressed:
+            super().mousePressEvent(event)
+            return
+        
         if self.edit_mode == self.MODE_PAN:
             # Let Qt handle pan with ScrollHandDrag
             super().mousePressEvent(event)
@@ -481,6 +486,11 @@ class ImageViewer(QGraphicsView):
                 self.scene.addItem(self.rect_item)
     
     def mouseMoveEvent(self, event):
+        # Space bar temporary pan mode - let Qt handle pan
+        if self._space_pressed:
+            super().mouseMoveEvent(event)
+            return
+        
         if self.edit_mode == self.MODE_SELECT and self.drawing and self.selection_rect:
             # Update selection rectangle
             current = self.mapToScene(event.pos())
@@ -525,6 +535,11 @@ class ImageViewer(QGraphicsView):
             super().mouseMoveEvent(event)
     
     def mouseReleaseEvent(self, event):
+        # Space bar temporary pan mode - let Qt handle pan
+        if self._space_pressed:
+            super().mouseReleaseEvent(event)
+            return
+        
         if self.edit_mode == self.MODE_SELECT and self.drawing and self.selection_rect:
             # Complete box selection
             self.drawing = False
@@ -937,7 +952,7 @@ class LabelingWindow(QMainWindow):
         QShortcut(QKeySequence("1"), self, lambda: self._set_selected_label("normal"))
         QShortcut(QKeySequence("2"), self, lambda: self._set_selected_label("rod"))
         QShortcut(QKeySequence("3"), self, lambda: self._set_selected_label("artifact"))
-        QShortcut(QKeySequence("Ctrl+S"), self, self._save_labels)
+        QShortcut(QKeySequence("Ctrl+S"), self, self._save_current)  # Mode-aware save
         QShortcut(QKeySequence("Ctrl+Z"), self, self._undo)
         QShortcut(QKeySequence("Delete"), self, self._delete_selected)
         # Mode shortcuts (left hand: Q W E area)
@@ -948,6 +963,13 @@ class LabelingWindow(QMainWindow):
         QShortcut(QKeySequence("R"), self, self._merge_selected)  # meRge
         QShortcut(QKeySequence("G"), self, self._group_selected)  # Group
         QShortcut(QKeySequence("F"), self, self._ungroup_selected)  # Free from group
+    
+    def _save_current(self):
+        """Save based on current mode - Ctrl+S handler."""
+        if self.mode == self.MODE_EDIT:
+            self._save_edit_changes()
+        else:
+            self._save_labels()
     
     def _save_state(self):
         """Save current state to undo stack."""
