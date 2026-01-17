@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
     QListWidget, QMenu, QRadioButton, QTreeWidget, QTreeWidgetItem,
     QFrame
 )
-from PySide6.QtCore import Qt, QThread, Signal, QSize, QRectF
+from PySide6.QtCore import Qt, QThread, Signal, QSize, QRectF, QTimer
 from PySide6.QtGui import (
     QFont, QPixmap, QImage, QIcon, QKeySequence, QPainter, 
     QPen, QColor, QBrush, QShortcut, QPalette, QWheelEvent,
