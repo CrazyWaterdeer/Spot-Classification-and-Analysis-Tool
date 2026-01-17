@@ -132,6 +132,8 @@ class Theme:
     @staticmethod
     def get_app_stylesheet() -> str:
         """Return the complete application stylesheet."""
+        # Get resources path for images
+        resources_path = str(Path(__file__).parent / "resources").replace("\\", "/")
         return f"""
             /* Main Window */
             QMainWindow, QDialog {{
@@ -186,7 +188,7 @@ class Theme:
                 top: 6px;
                 padding: 2px 10px;
                 color: {Theme.PRIMARY};
-                background-color: {Theme.BG_DARK};
+                background-color: transparent;
                 font-size: 13px;
             }}
             
@@ -211,9 +213,9 @@ class Theme:
                 color: #404040;
             }}
             
-            /* Input Fields */
+            /* Input Fields - background matches surroundings */
             QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox {{
-                background-color: {Theme.BG_MEDIUM};
+                background-color: {Theme.BG_DARK};
                 border: 1px solid {Theme.BORDER};
                 border-radius: 5px;
                 padding: 8px 10px;
@@ -235,38 +237,42 @@ class Theme:
                 border-top: 6px solid {Theme.TEXT_SECONDARY};
             }}
             QComboBox QAbstractItemView {{
-                background-color: {Theme.BG_MEDIUM};
+                background-color: {Theme.BG_DARK};
                 border: 1px solid {Theme.BORDER};
                 selection-background-color: {Theme.SECONDARY};
                 padding: 4px;
             }}
             
-            /* SpinBox buttons */
-            QSpinBox::up-button, QSpinBox::down-button,
-            QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {{
-                background-color: {Theme.BG_LIGHT};
-                border: 1px solid {Theme.BORDER};
+            /* SpinBox buttons - clean chevron arrows */
+            QSpinBox::up-button, QDoubleSpinBox::up-button {{
+                subcontrol-origin: border;
+                subcontrol-position: top right;
                 width: 20px;
-                border-radius: 2px;
-                margin: 1px;
+                border: none;
+                background-color: transparent;
+                margin-right: 2px;
             }}
-            QSpinBox::up-button:hover, QSpinBox::down-button:hover,
-            QDoubleSpinBox::up-button:hover, QDoubleSpinBox::down-button:hover {{
-                background-color: {Theme.SECONDARY};
+            QSpinBox::down-button, QDoubleSpinBox::down-button {{
+                subcontrol-origin: border;
+                subcontrol-position: bottom right;
+                width: 20px;
+                border: none;
+                background-color: transparent;
+                margin-right: 2px;
+            }}
+            QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover,
+            QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover {{
+                background-color: {Theme.BG_LIGHT};
             }}
             QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {{
+                image: url({resources_path}/Chevron-up.svg);
                 width: 10px;
                 height: 10px;
-                border-left: 5px solid transparent;
-                border-right: 5px solid transparent;
-                border-bottom: 6px solid {Theme.TEXT_PRIMARY};
             }}
             QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {{
+                image: url({resources_path}/Chevron-down.svg);
                 width: 10px;
                 height: 10px;
-                border-left: 5px solid transparent;
-                border-right: 5px solid transparent;
-                border-top: 6px solid {Theme.TEXT_PRIMARY};
             }}
             
             /* Labels - no background, bold for form labels */
@@ -291,7 +297,7 @@ class Theme:
                 background-color: {Theme.SECONDARY};
             }}
             QHeaderView::section {{
-                background-color: {Theme.BG_MEDIUM};
+                background-color: {Theme.BG_DARK};
                 color: {Theme.TEXT_PRIMARY};
                 padding: 10px 8px;
                 border: none;
@@ -411,7 +417,7 @@ class Theme:
                 height: 18px;
                 border-radius: 4px;
                 border: 2px solid {Theme.BORDER};
-                background-color: {Theme.BG_MEDIUM};
+                background-color: {Theme.BG_DARK};
             }}
             QCheckBox::indicator:checked {{
                 background-color: {Theme.PRIMARY};
@@ -936,6 +942,7 @@ class TrainingTab(QWidget):
         
         # Scroll content widget
         scroll_content = QWidget()
+        scroll_content.setStyleSheet(f"background-color: {Theme.BG_MEDIUM};")
         layout = QVBoxLayout(scroll_content)
         layout.setSpacing(15)
         layout.setContentsMargins(15, 15, 15, 15)
@@ -1675,7 +1682,7 @@ class AnalysisTab(QWidget):
         
         # Container widget for scroll area content
         scroll_content = QWidget()
-        scroll_content.setStyleSheet("background-color: transparent;")
+        scroll_content.setStyleSheet(f"background-color: {Theme.BG_MEDIUM};")
         layout = QVBoxLayout(scroll_content)
         layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(6)
@@ -1712,23 +1719,6 @@ class AnalysisTab(QWidget):
         input_row.addWidget(self.browse_btn)
         
         io_layout.addLayout(input_row)
-        
-        # Files preview (simple list, double-click to remove)
-        self.files_preview = QTreeWidget()
-        self.files_preview.setHeaderLabels(["File", "Size"])
-        self.files_preview.setColumnWidth(0, 300)
-        self.files_preview.setMaximumHeight(150)
-        self.files_preview.setVisible(False)
-        self.files_preview.setToolTip("Double-click to remove a file")
-        self.files_preview.itemDoubleClicked.connect(self._remove_file_from_selection)
-        io_layout.addWidget(self.files_preview)
-        
-        # Load saved input path and refresh preview
-        saved_input = config.get("last_input_dir", "")
-        if saved_input and Path(saved_input).exists():
-            self.input_path_edit.setText(saved_input.replace('\\', '/'))
-            # Delay preview update until after UI is built
-            QTimer.singleShot(100, self._update_files_preview)
         
         self.output_dir = PathSelector("Output", is_folder=True, config_key="last_output_dir", default_path=default_output)
         self.model_path = PathSelector("Classifier", filter="Model (*.pkl *.pt)", config_key="last_model_path")
@@ -2000,14 +1990,11 @@ class AnalysisTab(QWidget):
         if files:
             self._selected_files = files
             config.set("last_input_dir", str(Path(files[0]).parent))
-            self._update_files_preview()
+            self._update_input_display()
     
-    def _update_files_preview(self):
-        """Update the files preview tree."""
-        self.files_preview.clear()
-        
+    def _update_input_display(self):
+        """Update the input path display."""
         if not self._selected_files:
-            self.files_preview.setVisible(False)
             self.input_path_edit.clear()
             return
         
@@ -2016,27 +2003,6 @@ class AnalysisTab(QWidget):
         count = len(self._selected_files)
         display_text = f"{str(folder).replace(chr(92), '/')} ({count} file{'s' if count > 1 else ''})"
         self.input_path_edit.setText(display_text)
-        
-        # Show file list
-        self.files_preview.setVisible(True)
-        for f in sorted(self._selected_files):
-            p = Path(f)
-            try:
-                size_kb = p.stat().st_size / 1024
-                size_str = f"{size_kb:.0f} KB" if size_kb < 1024 else f"{size_kb/1024:.1f} MB"
-            except:
-                size_str = ""
-            
-            item = QTreeWidgetItem([p.name, size_str])
-            item.setData(0, Qt.UserRole, f)
-            self.files_preview.addTopLevelItem(item)
-    
-    def _remove_file_from_selection(self, item, column):
-        """Remove a file from selection (double-click handler)."""
-        full_path = item.data(0, Qt.UserRole)
-        if full_path in self._selected_files:
-            self._selected_files.remove(full_path)
-            self._update_files_preview()
     
     def _get_image_files(self) -> List[Path]:
         """Get list of selected image files."""

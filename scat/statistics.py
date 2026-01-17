@@ -17,14 +17,15 @@ POSITIVE_CONTROL_KEYWORDS = ['positive', 'pos', 'pos_ctrl', 'positive_control']
 TREATMENT_KEYWORDS = ['treatment', 'treat', 'treated', 'exp', 'experimental', 'test']
 
 
-def detect_group_type(group_name: str) -> str:
+def detect_group_type(group_name) -> str:
     """
     Auto-detect group type from name.
     
     Returns:
         'negative_control', 'positive_control', 'treatment', or 'unknown'
     """
-    name_lower = group_name.lower().replace(' ', '_').replace('-', '_')
+    # Convert to string in case of numeric group names
+    name_lower = str(group_name).lower().replace(' ', '_').replace('-', '_')
     
     # Check positive control first (more specific)
     for kw in POSITIVE_CONTROL_KEYWORDS:
@@ -44,7 +45,7 @@ def detect_group_type(group_name: str) -> str:
     return 'unknown'
 
 
-def categorize_groups(group_names: List[str]) -> Dict[str, List[str]]:
+def categorize_groups(group_names: List) -> Dict[str, List[str]]:
     """
     Categorize groups into control/treatment categories.
     
@@ -60,7 +61,7 @@ def categorize_groups(group_names: List[str]) -> Dict[str, List[str]]:
     
     for name in group_names:
         group_type = detect_group_type(name)
-        categories[group_type].append(name)
+        categories[group_type].append(str(name))  # Convert to string
     
     return categories
 

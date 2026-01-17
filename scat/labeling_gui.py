@@ -76,6 +76,8 @@ class Theme:
     
     @classmethod
     def get_stylesheet(cls) -> str:
+        # Get resources path for images
+        resources_path = str(Path(__file__).parent / "resources").replace("\\", "/")
         return f"""
             QMainWindow, QWidget {{
                 background-color: {cls.BG_DARKEST};
@@ -94,6 +96,7 @@ class Theme:
                 left: 10px;
                 padding: 0 8px;
                 color: {cls.PRIMARY};
+                background-color: transparent;
             }}
             QPushButton {{
                 background-color: {cls.BG_LIGHT};
@@ -111,7 +114,7 @@ class Theme:
                 background-color: {cls.PRIMARY};
             }}
             QSpinBox, QDoubleSpinBox {{
-                background-color: {cls.BG_MEDIUM};
+                background-color: {cls.BG_DARK};
                 border: 1px solid {cls.BORDER};
                 border-radius: 4px;
                 padding: 4px 8px;
@@ -120,6 +123,34 @@ class Theme:
             }}
             QSpinBox:focus, QDoubleSpinBox:focus {{
                 border-color: {cls.PRIMARY};
+            }}
+            QSpinBox::up-button, QDoubleSpinBox::up-button {{
+                subcontrol-origin: border;
+                subcontrol-position: top right;
+                width: 18px;
+                border: none;
+                background-color: transparent;
+            }}
+            QSpinBox::down-button, QDoubleSpinBox::down-button {{
+                subcontrol-origin: border;
+                subcontrol-position: bottom right;
+                width: 18px;
+                border: none;
+                background-color: transparent;
+            }}
+            QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover,
+            QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover {{
+                background-color: {cls.BG_LIGHT};
+            }}
+            QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {{
+                image: url({resources_path}/Chevron-up.svg);
+                width: 10px;
+                height: 10px;
+            }}
+            QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {{
+                image: url({resources_path}/Chevron-down.svg);
+                width: 10px;
+                height: 10px;
             }}
             QTableWidget {{
                 background-color: {cls.BG_DARK};
@@ -131,7 +162,7 @@ class Theme:
                 background-color: {cls.SECONDARY};
             }}
             QHeaderView::section {{
-                background-color: {cls.BG_MEDIUM};
+                background-color: {cls.BG_DARK};
                 color: {cls.TEXT_PRIMARY};
                 padding: 6px;
                 border: none;
@@ -143,7 +174,7 @@ class Theme:
                 spacing: 8px;
                 padding: 6px 12px;
                 border-radius: 4px;
-                background-color: {cls.BG_MEDIUM};
+                background-color: {cls.BG_DARK};
             }}
             QRadioButton:hover {{
                 border: 1px solid {cls.SECONDARY};
@@ -808,6 +839,7 @@ class LabelingWindow(QMainWindow):
         view_layout = QVBoxLayout()
         
         self.show_ids_check = QCheckBox("Show ID numbers")
+        self.show_ids_check.setStyleSheet("background-color: transparent;")
         self.show_ids_check.setChecked(False)
         self.show_ids_check.toggled.connect(self._toggle_show_ids)
         view_layout.addWidget(self.show_ids_check)
